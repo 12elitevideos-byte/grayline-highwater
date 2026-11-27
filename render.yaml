@@ -1,0 +1,9 @@
+services:
+  - name: grayline-highwater
+    type: web
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci && npm run build
+    startCommand: node server.mjs
+    healthCheckPath: /health

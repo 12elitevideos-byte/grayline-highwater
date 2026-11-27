@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Grayline: Highwater · Island Battle Royale</title>
+<style>
+:root{--ink:#111716;--panel:#141b19;--steel:#a8b5ae;--paper:#f1f2e9;--line:#b7c9bf38;--accent:#e3b478;--blue:#80cdf0;--violet:#bda3ff;--glass:#111916e8;--mono:ui-monospace,Consolas,monospace}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#202925;color:var(--paper);font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+button,input,select{font:inherit}
+button,select{color:var(--paper);background:#242e29;border:1px solid var(--line);border-radius:3px}
+button{cursor:pointer}
+button:hover{border-color:var(--accent);background:#354138}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+button:disabled{opacity:.6;cursor:default}
+#world{position:fixed;inset:0;width:100%;height:100%;display:block;outline:0}
+.overlay{position:fixed;inset:0;display:grid;align-items:center}
+#menu{background:linear-gradient(90deg,#101b1c 0%,#101b1ceb 20%,#101b1c55 49%,transparent 74%),linear-gradient(0deg,#0d1819d9,transparent 22%);padding:clamp(24px,7vw,112px)}
+#menuInner{max-width:620px;margin-bottom:3vh}
+.eyebrow,.sectionLabel,.metric label,kbd,.strip,.micro{font:700 10px/1.35 var(--mono);letter-spacing:.12em;text-transform:uppercase}
+.eyebrow{color:var(--accent);display:flex;align-items:center;gap:11px}
+.eyebrow::before{content:"";width:25px;height:2px;background:currentColor}
+h1{font-size:clamp(54px,9.6vw,156px);line-height:.84;letter-spacing:-.076em;margin:16px 0 24px;font-weight:950;text-shadow:0 6px 32px #09151a60}
+#edition{display:block;margin:13px 0 0 3px;color:#f0c48b;font:750 clamp(12px,1.7vw,24px)/1 var(--mono);letter-spacing:.38em;text-transform:uppercase}
+h2{font-size:clamp(28px,4vw,49px);line-height:1;letter-spacing:-.052em;margin:9px 0 20px}
+p{color:var(--steel)}
+#menu p{font-size:clamp(15px,1.55vw,20px);max-width:28ch;line-height:1.5;margin:0 0 27px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.actions button,.action{padding:10px 17px;font-weight:750;min-height:42px}
+button.primary{background:var(--accent);border-color:var(--accent);color:#171b16}
+button.primary:hover{background:#f9d4a4}
+#play{min-width:148px;text-align:center}
+#notice{max-width:47ch!important;margin:15px 0 0!important;font-size:14px!important;color:#ffd5aa}
+#menuFooter{position:absolute;bottom:clamp(14px,4vh,46px);left:clamp(24px,7vw,112px);right:clamp(24px,7vw,112px);display:flex;align-items:end;justify-content:space-between;gap:20px;color:#e0e7df}
+.strip{padding:8px 0;border-top:1px solid #e0e7df60}
+#vista{text-shadow:0 2px 8px #101916;text-align:right}
+#modal{place-items:center;background:#09100dc9;padding:12px}
+.panel{width:min(100%,590px);max-height:95vh;overflow:auto;border:1px solid #cad2bd4a;border-radius:6px;background:var(--panel);padding:clamp(15px,3.4vw,32px);box-shadow:0 24px 90px #0008}
+.panel p{line-height:1.55}
+#settingsPanel{width:min(100%,760px)}
+.tabs{display:flex;gap:5px;border-bottom:1px solid var(--line);padding-bottom:11px;margin-bottom:8px}
+.tabs button,.small,.bind{padding:7px 12px}
+.tabs [aria-selected=true],.bind.listening{color:var(--accent);border-color:var(--accent)}
+.setting{display:grid;grid-template-columns:1fr minmax(113px,44%);gap:8px 16px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.setting select{padding:6px}
+.setting input{accent-color:var(--accent);margin:0}
+.setting input[type=checkbox]{justify-self:end;width:17px;height:17px}
+.range{display:grid;grid-template-columns:1fr 43px;gap:12px;align-items:center}
+.range output{text-align:right;font:12px var(--mono);color:var(--accent)}
+.setting small,#bindingStatus{display:block;color:var(--steel);font-size:11px}
+#bindings{display:grid;grid-template-columns:1fr 1fr;gap:0 20px;margin-top:12px}
+#bindings .setting{grid-template-columns:1fr auto;font-size:12px}
+.bind{min-width:68px;text-align:center}
+.footer{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:18px}
+#hud{position:fixed;inset:0;pointer-events:none;text-shadow:0 1px 3px #000b}
+.glass{background:var(--glass);border:1px solid var(--line);border-radius:4px}
+#north{position:absolute;top:14px;left:50%;transform:translateX(-50%);text-align:center}
+#compass{display:block;width:min(31vw,276px);height:30px;filter:drop-shadow(0 1px 2px #000)}
+#location{display:inline-block;padding:4px 10px;background:#131c17cb;border:1px solid var(--line);border-radius:4px;color:#e8eee2;font:700 10px var(--mono);letter-spacing:.09em;text-transform:uppercase}
+#status{position:absolute;top:15px;right:15px;width:clamp(134px,15.7vw,218px);overflow:hidden}
+#mini{width:100%;display:block;aspect-ratio:1}
+#metrics{display:grid;grid-template-columns:.9fr .83fr 1.22fr;border-top:1px solid var(--line)}
+.metric{padding:6px 8px;min-width:0}
+.metric+.metric{border-left:1px solid var(--line)}
+.metric label{display:block;color:#c0ccc4;font-size:8px}
+.metric b{font:850 16px/1.25 var(--mono);display:block;margin-top:2px}
+#timer{color:#dccaff}
+#phase{padding:5px 8px;border-top:1px solid var(--line);font-size:10px;color:#c7bfdc}
+#feed{position:absolute;top:15px;left:15px;display:grid;gap:4px}
+.feedRow{width:max-content;max-width:31vw;background:#111915d9;border-left:2px solid #a9b6ac;padding:4px 8px;color:#e0e6dc;font-size:11px}
+.feedRow.mine{border-color:var(--accent);color:var(--accent)}
+#fps{position:absolute;top:75px;left:50%;transform:translateX(-50%);font:11px var(--mono);background:#141c17b8;padding:3px 6px}
+#objective{position:absolute;top:21%;left:50%;transform:translateX(-50%);text-align:center;width:min(92%,490px)}
+#objectiveTitle{display:inline-block;font-weight:850;letter-spacing:.04em;background:#111b16e5;border:1px solid var(--line);border-left:3px solid var(--accent);padding:8px 17px}
+#objectiveHelp{display:block;margin:6px 0;font-size:12px;font-weight:650}
+#buildStatus{position:absolute;left:50%;bottom:80px;transform:translateX(-50%);padding:4px 9px;color:#b2e4ff;text-align:center;font-size:11px}
+#buildStatus.blocked{color:#ffc0a5}
+@media(max-width:720px){#buildStatus{bottom:126px}}
+#message{position:absolute;top:34%;left:50%;transform:translateX(-50%);max-width:67vw;text-align:center;padding:6px 12px;color:var(--accent);font-weight:750}
+#interact{position:absolute;top:57%;left:50%;transform:translateX(-50%);padding:6px 9px;white-space:nowrap}
+kbd{display:inline-block;border:1px solid #bdcfc269;padding:2px 4px;border-radius:3px;color:#f4f4eb;background:#152019bc;min-width:17px;text-align:center}
+#reticle{position:absolute;top:50%;left:50%;width:30px;height:30px;transform:translate(-50%,-50%);--gap:5px}
+#reticle i{position:absolute;background:#f6f6e8;box-shadow:0 0 2px #121515;border-radius:1px}
+#reticle i:nth-child(1),#reticle i:nth-child(2){width:6px;height:1px;top:14.5px}
+#reticle i:nth-child(1){right:calc(15px + var(--gap))}
+#reticle i:nth-child(2){left:calc(15px + var(--gap))}
+#reticle i:nth-child(3),#reticle i:nth-child(4){width:1px;height:6px;left:14.5px}
+#reticle i:nth-child(3){bottom:calc(15px + var(--gap))}
+#reticle i:nth-child(4){top:calc(15px + var(--gap))}
+#reticle i:nth-child(5){width:2px;height:2px;left:14px;top:14px}
+#reticle.hit{transform:translate(-50%,-50%) rotate(45deg)}
+#reticle.hit i{background:#ffdb91}
+#reticle.blocked i{background:#ee856a}
+#scope{position:absolute;inset:0;background:radial-gradient(circle,transparent 0 28vh,#171d1dc4 28.15vh,#0a0d0d 29.4vh)}
+#scope:before,#scope:after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#070c0dbb}
+#scope:before{width:55vh;height:1px}
+#scope:after{height:55vh;width:1px}
+#vignette{position:absolute;inset:0;box-shadow:inset 0 0 min(14vw,180px) 28px #e15f477c;opacity:0}
+#vignette.storm{box-shadow:inset 0 0 150px 32px #8a45eaa6;background:#29194b28}
+#vignette.hardHit{box-shadow:inset 0 0 min(16vw,210px) 45px #d84637b3;background:#90261816}
+#direction{position:absolute;left:50%;top:50%;width:160px;height:160px;margin:-80px 0 0 -80px}
+#direction:before{content:"";position:absolute;top:0;left:65px;width:30px;height:9px;background:#ed7658;clip-path:polygon(0 100%,50% 0,100% 100%,50% 70%)}
+#damageText{position:absolute;inset:0;overflow:hidden}
+.float{position:absolute;color:#f6f3de;font:900 20px var(--mono);animation:rise .7s ease-out forwards}
+.float.armor{color:var(--blue)}
+.float.head{font-size:23px}
+@keyframes rise{to{transform:translateY(-43px);opacity:0}}
+#bottom{position:absolute;left:15px;right:15px;bottom:15px;display:grid;grid-template-columns:minmax(134px,1fr) auto minmax(134px,1fr);gap:10px;align-items:end}
+#bars{width:min(100%,220px);padding:8px}
+.barLine{display:flex;justify-content:space-between;font:700 10px var(--mono)}
+.track{height:5px;background:#48534b;margin:4px 0 7px;border-radius:2px;overflow:hidden}
+.track:last-child{margin-bottom:0}
+.track i{height:100%;display:block;width:0;background:#a4cc8c;transition:width .15s}
+#shieldFill{background:#69bbdb}
+#hotbar,#buildSlots{display:flex;gap:3px}
+.slot{width:clamp(49px,7.2vw,88px);height:51px;position:relative;padding:2px 4px;background:#141d19e9;border:1px solid var(--line);border-bottom:3px solid var(--rarity,#4b5850);border-radius:4px;text-align:left}
+.slot.selected{outline:1px solid #f7d7ac;background:#33382ce9}
+.slot kbd{position:absolute;top:3px;left:4px;font-size:8px;padding:1px 3px;min-width:0}
+.slot canvas{position:absolute;right:1px;top:2px;width:73%;height:25px}
+.slot b{position:absolute;bottom:3px;left:4px;right:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:700}
+.slot em{position:absolute;top:1px;right:3px;font:9px var(--mono);color:#fff}
+#rightBar{justify-self:end;min-width:min(126px,100%);text-align:right;padding:6px 8px}
+#equipped{display:block;font-size:10px;color:var(--steel)}
+#ammo{font:900 clamp(15px,2.8vw,24px)/1.1 var(--mono);display:block}
+#ammo small{font-size:11px;color:var(--steel)}
+#materials{display:flex;gap:7px;justify-content:flex-end;margin-top:5px;white-space:nowrap;font-size:10px}
+#materials b{font-family:var(--mono)}
+#zoneBanner{position:absolute;bottom:17%;left:50%;transform:translateX(-50%);padding:5px 9px;background:#292049e9;color:#eedcff;border:1px solid #b6a2e8;border-radius:4px;font:800 10px var(--mono);letter-spacing:.08em;white-space:nowrap}
+#progress{position:absolute;left:50%;top:62%;transform:translateX(-50%);width:170px;padding:5px 7px;font-size:10px}
+#progress .track{margin-bottom:0}
+#progressFill{background:var(--accent);transition:none}
+#mapPanel{width:auto;padding:13px 16px}
+#bigMap{width:min(72vh,84vw,640px);height:auto;display:block;margin:8px auto;aspect-ratio:1;border:1px solid var(--line);border-radius:3px}
+#mapLegend{display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--steel);margin:4px 0 10px}
+.legend{display:flex;align-items:center;gap:5px}
+.legend i{width:9px;height:9px;border:1px solid #fff;border-radius:50%}
+.legend.next i{border-color:var(--violet)}
+.legend.route i{width:14px;height:0;border:0;border-top:2px dashed var(--accent);border-radius:0}
+#inventorySlots{display:flex;gap:5px;flex-wrap:wrap;margin:11px 0}
+#inventorySlots .slot{width:clamp(56px,15vw,96px)}
+#reserves{font:12px var(--mono);color:var(--steel)}
+#resultStats{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin:18px 0 23px;color:var(--steel)}
+#resultStats div{border-top:1px solid var(--line);padding-top:7px;font-size:10px;text-transform:uppercase;letter-spacing:.05em}
+#resultStats strong{display:block;font:800 clamp(16px,2.4vw,24px) var(--mono);color:var(--paper);margin-bottom:3px}
+@media(max-width:720px){#status{right:7px;top:7px;min-width:118px}#feed{left:7px;top:7px}#north{top:7px}#bottom{grid-template-columns:1fr 1fr;bottom:7px;gap:5px}#inventory{grid-column:1/-1;grid-row:2;justify-self:center}#bindings{grid-template-columns:1fr}#zoneBanner{bottom:26%}}
+/* Interface surfaces share the muted green of the world and one amber action color. */
+:root{--panel:#18211e;--paper:#f5f2e7;--steel:#b4c1b6;--line:#a3b6a73b;--accent:#f2bd7e;--glass:#101815e8;--violet:#d1b4fb;--heal:#a6ce94;--shade:#ea866c;--edge:clamp(14px,4.7vw,76px)}
+body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+button,select,input[type=search]{border-radius:7px;background:#212d28;color:var(--paper)}
+button{transition:background-color .14s,border-color .14s,color .14s,transform .14s}
+button:hover{background:#31413a;border-color:#9bad9c91}
+button:active{transform:translateY(1px)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#1d211a;box-shadow:0 7px 20px #0003}
+button.primary:hover{background:#ffdaab}
+button:focus-visible,input:focus-visible,select:focus-visible,canvas:focus-visible{outline:2px solid #f4c78e;outline-offset:3px}
+#menu{display:flex;align-items:center;overflow:auto;padding:clamp(22px,8vh,96px) var(--edge) 90px;background:linear-gradient(90deg,#111916fa 0%,#101815ed 22%,#10181587 48%,#10181511 72%),linear-gradient(0deg,#0b1514d9,transparent 25%)}
+#menuInner{max-width:680px;width:min(100%,680px);margin:0}
+.menuBrand{display:flex;align-items:center;gap:13px;color:var(--accent);font:750 11px/1 var(--mono);text-transform:uppercase;letter-spacing:.155em}
+#menu h1{font-weight:950;letter-spacing:-.075em;font-size:clamp(52px,9.4vw,150px);margin:19px 0 31px;line-height:.86;color:var(--paper)}
+#edition{font-size:clamp(13px,1.65vw,24px);letter-spacing:.36em;margin-top:16px}
+.menu-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-width:380px}
+.menu-actions button{text-align:left;padding:13px 16px;font-weight:680;background:#17231de8;min-height:46px}
+.menu-actions .deploy{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;font-weight:850;background:var(--accent);min-height:59px;padding:12px 18px;font-size:18px}
+.play-arrow{font-size:24px;line-height:1}
+#menuFooter{left:var(--edge);right:var(--edge);bottom:clamp(13px,4vh,40px);border-top:1px solid #adbbb955;padding-top:12px;align-items:center;font-size:12px;letter-spacing:.035em}
+#vista{padding:6px 10px;border-radius:4px;background:#13211cbd;color:#e8e7d3}
+#lastMatch{position:absolute;right:var(--edge);bottom:calc(clamp(13px,4vh,40px) + 60px);padding:14px 19px;min-width:188px;background:#16221dd9;border:1px solid #c3cbab49;border-radius:8px;display:grid;gap:5px}
+#lastMatch strong{font-size:25px;letter-spacing:-.035em;line-height:1.05}#lastMatch span{color:#c6d2c6}#lastMatch .micro{color:var(--accent)}
+#bootScreen{z-index:7;background:radial-gradient(ellipse at 65% 30%,#334238 0,transparent 57%),#111b17;place-items:center;padding:18px}
+.boot-card{width:min(100%,535px);padding:28px;border-left:2px solid var(--accent);background:#17231edc;box-shadow:0 24px 70px #0005}
+.boot-card h2{margin:10px 0 20px;font-size:clamp(29px,4vw,53px)}.boot-card .micro{color:var(--accent)}
+.boot-track{display:flex;gap:12px;align-items:center}.boot-track progress{width:100%;height:5px;appearance:none;border:0;border-radius:5px;overflow:hidden;background:#425048}.boot-track progress::-webkit-progress-bar{background:#425048}.boot-track progress::-webkit-progress-value{background:var(--accent)}.boot-track progress::-moz-progress-bar{background:var(--accent)}#bootPercent{font:720 12px var(--mono);color:var(--accent);min-width:4ch;text-align:right}#bootStage{margin:8px 0 12px}#bootTip{margin:0;font-size:12px;color:#a9b8a9}
+#modal{z-index:6;padding:clamp(8px,2vw,26px);background:radial-gradient(ellipse at 50% 22%,#111b1799 10%,#070e0ceb 85%)}
+.panel{width:min(100%,650px);max-height:calc(100dvh - 26px);border-radius:13px;border-color:#a4baab58;background:linear-gradient(155deg,#26342d 0%,#18221e 26%,#131d19 100%);padding:clamp(16px,3vw,29px);box-shadow:0 24px 85px #0009;animation:panel-enter .16s ease-out;scrollbar-color:#687d6f #1b2420}
+@keyframes panel-enter{from{transform:translateY(5px);opacity:.55}to{transform:translateY(0);opacity:1}}
+.panelHead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.panelHead h2{margin:0;line-height:1.02;flex:1 0 auto;font-size:clamp(26px,4vw,48px)}
+.panelHead .micro{flex:1 0 100%;color:var(--accent);letter-spacing:.13em}
+.panelFoot{margin-top:17px;padding-top:15px;border-top:1px solid var(--line)}
+.panel .actions button{padding:10px 15px;min-height:40px}
+.panel .actions.stacked{display:grid;max-width:320px}
+#pausePanel{width:min(100%,390px)}
+#settingsPanel{width:min(100%,820px)}
+#settingsSearch{border:1px solid var(--line);padding:8px 11px;min-height:38px;flex:0 1 210px;max-width:100%}
+.tabs{gap:5px;flex-wrap:wrap;margin:10px 0 5px}
+.tabs button{background:#1c2721;min-height:35px;white-space:nowrap;border-radius:5px}
+.tabs [aria-selected=true]{background:#493e2e;color:#f5d1a2;border-color:#d9af77}
+.setting{grid-template-columns:minmax(0,1fr) minmax(112px,43%);padding:9px 0;min-height:39px}
+.setting select{border-radius:5px;width:100%}.setting select,.setup-grid select{border-color:#788b7b80}
+#settingsEmpty{padding:15px 0}.searchGroup{color:var(--accent);font:730 10px var(--mono);letter-spacing:.11em;text-transform:uppercase;margin:13px 0 0}
+.confirm{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 11px;margin-top:12px;background:#393225;border:1px solid #dfb07f8b;border-radius:5px}.confirm span{flex:1 0 max-content}.confirm button{padding:7px 13px}
+.setup-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.setup-choice{display:grid;align-content:start;gap:6px;padding:13px;background:#17241ec9;border:1px solid var(--line);border-radius:7px;min-width:0}
+.setup-choice span{font-weight:720}.setup-choice select{min-height:36px;padding:4px 7px;width:100%}.setup-choice small{color:var(--steel);min-height:2.7em}
+.setup-choice:last-child{grid-column:1/-1}
+.briefing{display:grid;gap:8px}.briefing article{padding:9px 13px;border:1px solid var(--line);border-radius:6px;background:#17241e}
+.briefing h3{margin:0;color:#e7dac0;font-size:15px}.briefing p{margin:4px 0 0}
+#quickControls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 17px}#quickControls div{display:flex;align-items:center;justify-content:space-between;gap:7px;border-bottom:1px solid var(--line);padding:7px 0}
+#hud{zoom:var(--hud-scale,1);isolation:isolate}
+.glass{border-radius:7px;border-color:#a0b39b55;box-shadow:0 6px 17px #0003}
+#north{top:16px}#location{border-radius:5px;background:#13201adb;letter-spacing:.075em;color:#f2edda}#compass{width:min(32vw,294px)}
+#status{top:17px;right:17px;width:clamp(133px,15.3vw,218px);background:#101b18e9}
+#mini{border-bottom:1px solid var(--line)}#metrics{border:0}.metric{padding:6px 7px}.metric label{font-size:8.5px;color:#c7d1c2}.metric b{font-size:17px}#phase{color:var(--violet);padding:6px 8px;font:650 10px var(--mono);line-height:1.35}
+.feedRow{border-radius:0 4px 4px 0;padding:5px 9px;border-left-color:#91a398;font-size:11px}.feedRow.mine{border-left-color:var(--accent)}
+#bars{padding:9px 11px;max-width:226px}.barLine{font-size:10px}.track{background:#46564c;border-radius:3px;height:6px}.track i{background:var(--heal)}#shieldFill{background:var(--blue)}
+#hotbar,#buildSlots{gap:5px}.slot{border-radius:6px;width:clamp(40px,6.25vw,86px);height:54px;border-bottom-width:3px;background:#14201aee}.slot.selected{background:#3a3f31;outline-color:#f4cc9d}.slot canvas{height:26px;top:6px}.slot b{font-size:10.5px;bottom:4px}.slot.moving{outline:2px dashed var(--accent)}
+#rightBar{min-width:min(140px,100%);padding:8px 10px}#materials{font-size:9.5px;margin-top:8px;color:#cbd2bd}#ammo{color:#fff4dc}
+#bottom{left:16px;right:16px;bottom:16px;gap:8px;grid-template-columns:minmax(105px,1fr) auto minmax(113px,1fr)}
+#direction:before{background:var(--shade)}#zoneBanner{border-radius:5px;font-size:10px;color:#f3e9ff;max-width:70vw;overflow:hidden;text-overflow:ellipsis}
+#interact{top:auto;bottom:34%;max-width:92%;white-space:normal;text-align:center}#interact kbd{border-color:#ecd1a899;background:#3e3829;color:#fff2de}#lootCompare{display:block;color:#e7c794;font-size:11px;margin-top:4px}#progress{top:auto;bottom:29%;border-radius:5px}
+#lowHealth{position:absolute;left:50%;bottom:25%;transform:translateX(-50%);color:#ffe7d6;border:1px solid var(--shade);background:#4b2926ed;padding:4px 8px;border-radius:4px;font:800 11px var(--mono)}
+#soundCue{position:absolute;left:50%;bottom:12.5%;transform:translateX(-50%);max-width:88vw;padding:6px 10px;text-align:center;background:#0d1816e8;border-color:#b5c0a881;font:650 12px var(--mono)}
+#mapPanel{width:auto;max-width:100%;padding:clamp(10px,2vw,19px)}#mapPanel .panelHead h2{font-size:clamp(20px,3vw,32px)}#bigMap{width:min(67dvh,85vw,880px);cursor:crosshair;margin:3px auto 8px;image-rendering:auto}.legend.pin i{border-radius:2px;transform:rotate(45deg);border-color:var(--accent)}#mapHint{font-size:11px;color:var(--steel)}
+#inventorySlots{gap:7px}#inventorySlots .slot{flex:1;min-width:65px;max-width:110px;height:63px}#itemMoveHint{min-height:1.4em;color:var(--accent);font-size:12px}
+#resultStats{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}#resultStats div{border:1px solid var(--line);background:#15221b;padding:10px;border-radius:6px}#resultStats strong{color:#ffe0b6}#replayCanvas{display:block;width:100%;border:1px solid var(--line);border-radius:5px;margin-bottom:6px;background:#233831}
+#debugReadout{position:fixed;z-index:5;right:15px;top:15px;padding:8px 10px;background:#0a1715ea;border:1px solid #80b1a7a0;color:#c5f2dd;font:11px/1.52 var(--mono);white-space:pre;pointer-events:none;border-radius:4px}
+#botLabels{position:fixed;inset:0;z-index:4;pointer-events:none}#botLabels span{position:absolute;translate:-50% -100%;background:#0a1715d9;color:#d7efe0;border:1px solid #a8c1a873;padding:3px 5px;white-space:nowrap;font:10px var(--mono);border-radius:3px}#validatorOutput{max-height:26dvh;overflow:auto;white-space:pre-wrap;padding:7px;color:#d3e3d5}.debug-flags{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:10px 0;accent-color:var(--accent)}
+body[data-palette="tritan"]{--blue:#f1e770;--heal:#8bddd3;--shade:#f39d8d;--violet:#ffadae}body[data-palette="deutan"]{--blue:#85d2ff;--heal:#f1cea1;--shade:#eda3e2;--violet:#c9b0ff}
+body.largeText .panel,body.largeText .menu-actions{font-size:16px}body.largeText #hud{font-size:16px}body.largeText #equipped,body.largeText .feedRow,body.largeText #phase,body.largeText .slot b{font-size:12px}
+body.highContrast{--glass:#070c0bf6;--paper:#fff;--steel:#e0eddf;--line:#dae8d7a0}body.highContrast #hud{text-shadow:0 1px 3px #000}body.highContrast .track{background:#5e6b68}
+body.reducedMotion *,body.reducedMotion *::before{animation-duration:.001ms!important;transition-duration:.001ms!important}body.reducedMotion .float{animation:none!important}
+@media(prefers-reduced-motion:reduce){button,.panel{animation:none;transition:none}}
+@media(max-width:760px){#menu{padding-bottom:100px}#menu h1{letter-spacing:-.07em}#menuFooter{gap:7px}#menu{display:grid;align-content:center;grid-template-columns:1fr;gap:12px;padding-bottom:14px}#menuFooter{position:static;margin-top:3px}#lastMatch{position:static;justify-self:start;margin:0;min-width:0;padding:7px 10px;grid-auto-flow:column;align-items:baseline;gap:10px}#lastMatch strong{font-size:15px}#status{width:125px;right:8px;top:8px}.metric{padding:4px}.metric b{font-size:13px}#north{top:8px}#feed{top:9px;left:8px}.feedRow{max-width:22vw}#bottom{grid-template-columns:1fr 1fr;left:8px;right:8px;bottom:8px}#inventory{grid-column:1/-1;grid-row:2}#bars{min-width:87px;max-width:177px}#soundCue{bottom:21%}#rightBar{min-width:94px}#zoneBanner{bottom:28%}}
+@media(max-width:500px){.setup-grid,#quickControls{grid-template-columns:1fr}.setup-choice small{min-height:0}#settingsPanel .tabs button{font-size:12px;padding:5px 7px}#settingsSearch{flex:1 1 100%}#phase{font-size:8px}#status{width:108px}#compass{width:27vw}#inventorySlots .slot{min-width:48px}.slot b{font-size:9px}.slot{height:47px}.slot canvas{top:8px;height:20px}#bottom .track{height:4px}#rightBar{padding:4px 7px}#materials{gap:3px;font-size:8px}#menuMode,#vista{font-size:10px}}
+@media(max-height:520px){#menu{align-items:flex-start;align-content:start;padding-top:18px;padding-bottom:65px}#menu h1{font-size:clamp(47px,9vw,84px);margin:12px 0 18px}#edition{margin-top:10px}#lastMatch{bottom:55px}.menu-actions button{min-height:38px;padding:7px 12px}.menu-actions .deploy{min-height:42px}#menuFooter{bottom:9px}.panel{max-height:calc(100dvh - 16px)}#bigMap{width:min(59dvh,84vw)}#status{width:117px}}
+
+#menuInner .menu-actions .deploy{grid-column:span 2}
+#onlinePanel{max-width:32rem}
+.online-room{display:grid;gap:1rem}
+.online-room p,#onlineStatus{margin:.6rem 0;font-size:1rem;color:var(--muted,#b6c1c5)}
+#onlineStatus:empty{display:none}
+.room-join{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap}
+#joinForm label{display:block;margin-bottom:.4rem}
+#roomInput,#roomCode{font:700 1.25rem ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase}
+#roomInput{width:10rem;padding:.55rem .7rem;background:#131b20;border:1px solid #526168;color:#f1e8d6;border-radius:.25rem}
+#roomRoster{display:grid;grid-template-columns:1fr 1fr;gap:.25rem 1rem;margin:0;padding-left:1.5rem;max-height:13rem;overflow:auto}
+#botOption{display:flex;align-items:center;gap:.5rem}
+#onlinePause{color:#ead7ad}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/build/three.module.js",
+    "three/addons/": "./vendor/three/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="world" tabindex="-1" aria-label="Grayline game view"></canvas>
+<main id="menu" class="overlay" aria-label="Grayline Highwater">
+  <div id="menuInner">
+    <div class="menuBrand" aria-hidden="true"><svg width="42" height="32" viewBox="0 0 42 32" fill="none"><path d="M1 28 14 4h8L9 28H1Zm14 0L28 4h7L22 28h-7Zm12 0L39 6l3 7-8 15h-7Z" fill="currentColor"/></svg><span>Island battle royale</span></div>
+    <h1>GRAYLINE <span id="edition">Highwater</span></h1>
+    <div class="menu-actions">
+      <button id="play" class="primary deploy" data-ready disabled>Quick Play</button>
+      <button id="onlineFind" class="deploy" data-ready disabled>Battle Royale</button>
+      <button id="onlinePrivate" class="deploy" data-ready disabled>Private Match</button>
+      <button id="menuSettings" data-ready disabled>Settings</button><button id="menuControls" data-ready disabled>Controls</button>
+      <button id="menuHelp" data-ready disabled>How to play</button><button id="menuCredits" data-ready disabled>Credits</button>
+    </div>
+    <p id="notice" role="alert" hidden></p>
+  </div>
+  <aside id="lastMatch" hidden aria-label="Last match"><span class="micro">Last match</span><strong id="lastPlacement"></strong><span id="lastDetails"></span></aside>
+  <footer id="menuFooter"><span id="menuMode">First-person · Highwater</span><span id="vista" hidden></span></footer>
+</main>
+<div id="bootScreen" class="overlay" aria-labelledby="bootTitle">
+  <section class="boot-card">
+    <span class="micro">Grayline Highwater</span><h2 id="bootTitle">Preparing the island</h2>
+    <div class="boot-track"><progress id="bootProgress" max="100" value="0" aria-label="Island loading progress"></progress><output id="bootPercent">0%</output></div>
+    <p id="bootStage" role="status">Connecting to Three.js</p><p id="bootTip"></p>
+  </section>
+</div>
+<div id="hud" hidden>
+  <div id="vignette"></div><div id="scope" hidden></div>
+  <div id="north"><canvas id="compass" width="552" height="60"></canvas><span id="location">Grayline Island</span></div>
+  <div id="feed"></div><div id="fps" hidden></div>
+  <aside id="status" class="glass">
+    <canvas id="mini" width="260" height="260" aria-label="Island minimap"></canvas>
+    <div id="metrics">
+      <div class="metric"><label>Alive</label><b id="alive">–</b></div>
+      <div class="metric"><label>Elims</label><b id="kills">0</b></div>
+      <div class="metric"><label>Storm</label><b id="timer">–</b></div>
+    </div>
+    <div id="phase">Inbound</div>
+  </aside>
+  <div id="objective" hidden><b id="objectiveTitle"></b><span id="objectiveHelp"></span></div>
+  <div id="message" class="glass" hidden></div>
+  <div id="buildStatus" class="glass" hidden></div>
+  <div id="reticle" hidden><i></i><i></i><i></i><i></i><i></i></div>
+  <div id="direction" hidden></div><div id="damageText"></div>
+  <div id="interact" class="glass" hidden><kbd id="interactKey"></kbd> <span id="interactText"></span><small id="lootCompare" hidden></small></div>
+  <div id="progress" class="glass" hidden><span id="progressText"></span><div class="track"><i id="progressFill"></i></div></div>
+  <div id="zoneBanner" hidden>OUTSIDE THE SAFE ZONE</div>
+  <div id="lowHealth" hidden>LOW HEALTH</div><div id="soundCue" class="glass" hidden></div>
+  <div id="bottom">
+    <div id="bars" class="glass">
+      <div class="barLine"><span>SHIELD</span><b id="shield">0</b></div><div class="track"><i id="shieldFill"></i></div>
+      <div class="barLine"><span>HEALTH</span><b id="health">100</b></div><div class="track"><i id="healthFill"></i></div>
+    </div>
+    <div id="inventory"><div id="hotbar"></div><div id="buildSlots" hidden></div></div>
+    <div id="rightBar" class="glass"><span id="equipped"></span><b id="ammo"></b><div id="materials"></div></div>
+  </div>
+</div>
+<div id="modal" class="overlay" hidden>
+  <section id="onlinePanel" class="panel" role="dialog" aria-modal="true" aria-labelledby="onlineTitle" hidden>
+    <header class="panelHead"><span class="micro">Highwater · 25 players</span><h2 id="onlineTitle">Battle Royale</h2></header>
+    <div id="privateSetup" class="online-room" hidden>
+      <button id="createRoom" class="primary">Create room</button>
+      <form id="joinForm"><label for="roomInput">Room code</label>
+        <div class="room-join"><input id="roomInput" maxlength="6" minlength="6" pattern="[A-Za-z0-9]{6}" autocapitalize="characters" autocomplete="off" spellcheck="false" required>
+        <button id="joinRoom" type="submit">Join room</button></div>
+      </form>
+    </div>
+    <div id="roomLobby" class="online-room" hidden>
+      <div id="codeLine" class="room-join" hidden><strong id="roomCode"></strong><button id="copyCode">Copy code</button></div>
+      <p id="roomPlayers"></p>
+      <ol id="roomRoster" aria-label="Players"></ol>
+      <label id="botOption" hidden><input id="allowBots" type="checkbox" checked> Fill empty slots with bots</label>
+      <button id="roomStart" class="primary" hidden>Start match</button>
+    </div>
+    <p id="onlineStatus" role="status" aria-live="polite"></p>
+    <div class="actions panelFoot"><button id="onlineBack">Back</button></div>
+  </section>
+  <section id="setupPanel" class="panel" role="dialog" aria-modal="true" aria-labelledby="setupTitle" hidden>
+    <header class="panelHead"><span class="micro">Solo vs bots</span><h2 id="setupTitle">Match setup</h2></header>
+    <div id="matchOptions" class="setup-grid"></div>
+    <div class="actions panelFoot"><button id="beginMatch" class="primary">Deploy</button><button id="setupBack">Back</button></div>
+  </section>
+  <section id="pausePanel" class="panel" role="dialog" aria-modal="true" aria-labelledby="pauseTitle" hidden>
+    <header class="panelHead"><h2 id="pauseTitle">Match paused</h2></header>
+    <p id="onlinePause" hidden>The online match keeps running.</p>
+    <p id="lockHint" role="status" hidden>Click Resume to capture your mouse. Open Grayline in a desktop browser if mouse capture is unavailable here.</p>
+    <div class="actions stacked"><button id="resume" class="primary">Resume</button><button id="pauseSettings">Settings</button><button id="pauseControls">Controls</button><button id="exit">Main menu</button></div>
+  </section>
+  <section id="settingsPanel" class="panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
+    <header class="panelHead"><h2 id="settingsTitle">Settings</h2><input id="settingsSearch" type="search" placeholder="Search settings" aria-label="Search settings" autocomplete="off"></header>
+    <div class="tabs" role="tablist" aria-label="Settings"></div>
+    <div id="settingPages"></div><p id="settingsEmpty" hidden>No settings match your search.</p>
+    <div id="graphicsConfirm" class="confirm" hidden><span id="graphicsCountdown" role="status"></span><button id="applyGraphics" class="primary">Apply</button><button id="revertGraphics">Revert</button></div>
+    <div class="actions panelFoot"><button id="settingsBack">Back</button><button id="resetTab">Reset this tab</button></div>
+  </section>
+  <section id="controlsPanel" class="panel" role="dialog" aria-modal="true" aria-labelledby="controlsTitle" hidden>
+    <header class="panelHead"><h2 id="controlsTitle">Controls</h2></header>
+    <div id="quickControls"></div>
+    <div class="actions panelFoot"><button id="editBindings" class="primary">Rebind controls</button><button id="controlsBack">Back</button></div>
+  </section>
+  <section id="helpPanel" class="panel" role="dialog" aria-modal="true" aria-labelledby="helpTitle" hidden>
+    <header class="panelHead"><h2 id="helpTitle">How to play</h2></header>
+    <div class="briefing">
+      <article><h3>Choose your landing</h3><p>Check the bus route and next safe zone on the island map. Leave the bus and glide to a town or a quieter outpost.</p></article>
+      <article><h3>Get geared up</h3><p>Look at loot to compare it with your current gear. Search chests for better equipment and use your pickaxe to collect building materials.</p></article>
+      <article><h3>Stay ahead of the storm</h3><p>Watch the storm countdown and move toward the next ring. Use walls for cover and ramps for a better angle.</p></article>
+    </div><div class="actions panelFoot"><button id="helpBack">Back</button></div>
+  </section>
+  <section id="creditsPanel" class="panel" role="dialog" aria-modal="true" aria-labelledby="creditsTitle" hidden>
+    <header class="panelHead"><h2 id="creditsTitle">Credits</h2></header>
+    <div class="briefing"><article><h3>Grayline Highwater</h3><p>An original first-person island battle royale. The island, characters, textures, interface icons, music and sound effects are generated in the game.</p></article><article><h3>Rendering</h3><p>Three.js r160 by the Three.js Authors, distributed under the MIT license.</p></article></div>
+    <div class="actions panelFoot"><button id="creditsBack">Back</button></div>
+  </section>
+  <section id="mapPanel" class="panel" role="dialog" aria-modal="true" aria-labelledby="mapTitle" hidden>
+    <header class="panelHead"><h2 id="mapTitle">Grayline Island</h2></header>
+    <canvas id="bigMap" width="660" height="660" tabindex="0" aria-label="Island map. Click to place a ping. Use the arrow keys to move the cursor and Enter to ping."></canvas>
+    <div id="mapLegend"><span class="legend"><i></i> Safe zone</span><span class="legend next"><i></i> Next zone</span><span class="legend route"><i></i> Bus route</span><span class="legend pin"><i></i> Your ping</span></div>
+    <div class="actions"><button id="closeMap" class="primary">Return to match</button><button id="clearPing">Clear ping</button><span id="mapHint" role="status"></span></div>
+  </section>
+  <section id="inventoryPanel" class="panel" role="dialog" aria-modal="true" aria-labelledby="inventoryTitle" hidden>
+    <header class="panelHead"><h2 id="inventoryTitle">Inventory</h2></header><div id="inventorySlots"></div><p id="itemMoveHint" role="status"></p><p id="reserves"></p>
+    <div class="actions panelFoot"><button id="closeInventory" class="primary">Return to match</button><button id="inventoryMove">Move selected</button><button id="inventoryDrop">Drop selected</button></div>
+  </section>
+  <section id="resultPanel" class="panel" role="dialog" aria-modal="true" aria-labelledby="resultTitle" hidden>
+    <header class="panelHead"><div class="micro" id="resultOverline"></div><h2 id="resultTitle"></h2></header>
+    <p id="resultDetail"></p><div id="resultStats"></div>
+    <div id="replayBlock" hidden><canvas id="replayCanvas" width="520" height="176" aria-label="Map replay of the final encounter"></canvas><button id="replay" class="small">Replay final seconds</button></div>
+    <div class="actions panelFoot"><button id="again" class="primary">Play again</button><button id="resultBack">Main menu</button></div>
+  </section>
+  <section id="debugPanel" class="panel" role="dialog" aria-modal="true" aria-labelledby="debugTitle" hidden>
+    <header class="panelHead"><h2 id="debugTitle">World inspector</h2></header>
+    <div id="debugFlags" class="debug-flags"></div>
+    <label class="setting">Teleport to place <select id="debugPlace" aria-label="Teleport to place"></select></label>
+    <div class="actions panelFoot"><button id="validateWorld" class="primary">Validate world</button><button id="debugFly">Free-fly camera</button><button id="debugBack">Close inspector</button></div>
+    <pre id="validatorOutput" role="status"></pre>
+  </section>
+</div>
+<aside id="debugReadout" hidden aria-label="Performance and world diagnostics"></aside><div id="botLabels" aria-hidden="true" hidden></div>
+<script type="module" src="./game.mjs"></script>
+</body>
+</html>
