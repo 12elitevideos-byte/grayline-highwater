@@ -135,6 +135,7 @@ export class Match {
       roster:this.actors.map(({id,name,outfit})=>[id,name,outfit]),
       phases:storm.phases,
       start:position(match.start),end:position(match.end),yaw:match.yaw,duration:match.duration,
+      containerCount:loot.containers.length,
       opened:loot.containers.filter(entry=>entry.open).map(entry=>entry.netId),
       items:loot.items.filter(entry=>!entry.taken).map(entry=>this.lootRow(entry)),
       doors:world.doors.filter(door=>door.open).map(door=>door.netId),
@@ -176,6 +177,7 @@ export class Match {
       slot:p.slot,pick:p.usingPick,build:[p.buildType,p.buildMaterial,p.buildRotation],
       items:p.items,reserve:p.reserve,materials:p.materials,
       action:p.action?[p.action.type,p.action.total,round(p.action.remaining)]:null,
+      search:p.holdTarget?[p.holdTarget.netId,round(p.holdTime)]:null,
       stats:[p.kills,round(p.damageDone),p.shotsFired,p.shotsHit,p.looted],
       out:p.rank?[p.rank,p.killer,round(p.eliminatedAt)]:null
     };
@@ -192,6 +194,7 @@ export class Match {
     input.at=this.age;
     input.held=data.h&ACTION_MASK;
     input.taps|=data.j&ACTION_MASK;
+    if(data.j&ACTION.use) input.container=Number.isSafeInteger(data.container)?data.container:null;
     input.scroll=Math.sign(Number.isInteger(data.w)?data.w:0) || input.scroll;
     actor.yaw=wrapAngle(data.y);
     actor.pitch=clamp(data.p,-1.42,1.24);
@@ -255,7 +258,7 @@ export class Match {
     player.input(dt);
     if(player.state==="ground") {
       this.interacting=player;
-      g.loot.interact(player,dt,input);
+      g.loot.interact(player,dt,input,g.loot.containers[c.container]);
       if(player.inBuild) {
         if(just("shoot")) {
           g.builds.preview(player);
@@ -270,7 +273,7 @@ export class Match {
         }
       }
       this.interacting=null;
-    }
+    } else g.loot.resetInteraction(player);
     c.taps=c.scroll=0;
   }
 

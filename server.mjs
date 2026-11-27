@@ -205,7 +205,7 @@ export async function createServer({
       });
       // Send the larger inventory payload only when it changes, with a periodic refresh.
       const self=match.playerState(peer);
-      const signature=JSON.stringify([self.hp,self.shield,self.slot,self.pick,self.build,self.items,self.reserve,self.materials,self.action?.[0],self.stats,self.out]);
+      const signature=JSON.stringify([self.hp,self.shield,self.slot,self.pick,self.build,self.items,self.reserve,self.materials,self.action?.[0],self.search,self.stats,self.out]);
       if(signature!==peer.lastSelf || match.tickNumber%16===0) {
         peer.lastSelf=signature;
         send(peer,self);

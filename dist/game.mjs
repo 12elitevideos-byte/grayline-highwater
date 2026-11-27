@@ -748,7 +748,7 @@ class Renderer {
           float edge=smoothstep(.13,.61,length(center));
           if (d>.9 && (sprintBlur+aimBlur+impact)>.015) {
             float focus=smoothstep(.12,.68,abs(log(max(1.,d)/aimDepth)));
-            float blur=edge*(sprintBlur*.010+impact*.026)+aimBlur*focus*(.0006+edge*.0048);
+            float blur=edge*(sprintBlur*.006+impact*.019)+aimBlur*focus*(.00045+edge*.0035);
             vec2 motion=center*blur;
             vec2 defocus=vec2(-center.y,center.x)*aimBlur*focus*.006;
             vec3 sum=texture2D(tDiffuse,screenUV-motion).rgb+texture2D(tDiffuse,screenUV+motion).rgb;
@@ -913,6 +913,13 @@ class Renderer {
     this.camera.updateProjectionMatrix();
   }
   draw(focus, clock, dt, aerial) {
+    const s=this.settings.values;
+    const limited=(this.performanceScale??1)<.86;
+    // Keep edges antialiased under load. Full-screen lighting and bloom cost
+    // more than they contribute when the renderer is at its lowest scale.
+    this.shading.uniforms.enabledAO.value=+(s.post && s.ao && !limited);
+    this.bloom.enabled=s.post && s.bloom && !limited;
+    if(limited) this.shading.uniforms.shaftLight.value=0;
     if (this.resizePending) this.resize();
     this.gl.info.reset();
     this.cloudTime.value = clock;
@@ -924,9 +931,9 @@ class Renderer {
       this.sun.target.position.copy(this.shadowAnchor);
       this.sun.position.copy(this.sun.target.position).addScaledVector(this.sunDir,157);
       this.gl.shadowMap.needsUpdate = true;
-      this.shadowClock=aerial?.30:this.shadowStyle==="low"?.19:.12;
+      this.shadowClock=aerial?.30:limited || this.shadowStyle==="low"?.19:.12;
     }
-    if (this.settings.values.post || this.settings.values.aa) this.composer.render(dt);
+    if (s.post || s.aa) this.composer.render(dt);
     else this.gl.render(this.scene,this.camera);
   }
 }
@@ -2049,10 +2056,10 @@ class Terrain {
     };
     return mesh;
   }
-  updateReflection(camera,clock,prefs,dt) {
+  updateReflection(camera,clock,prefs,dt,canReflect=true) {
     const pos=camera.position,d=camera.getWorldDirection(this.reflectionDirection);
     let wanted=false;
-    if (prefs.reflections && !["low","medium"].includes(prefs.preset) && pos.y>SEA+.13 && pos.y<SEA+51 && d.y<.57) {
+    if (canReflect && prefs.reflections && !["low","medium"].includes(prefs.preset) && pos.y>SEA+.13 && pos.y<SEA+51 && d.y<.57) {
       // Only pay for a mirrored pass when there is water beneath the view or near the banks.
       for (const step of [3,17,35,64,104]) {
         if (wanted) break;
@@ -2069,7 +2076,9 @@ class Terrain {
     if (clock-this.reflectionAt>.46) this.water.material.uniforms.reflection.value=0;
   }
   update(focus,clock,prefs,aerial) {
+
     const detail=prefs.preset !== "low";
+    let uncached=null;
     for (const tile of this.tiles) {
       const d=dist(focus.x,focus.z,tile.x+64,tile.z+64);
       tile.mesh.visible=d<prefs.distance+106;
@@ -2077,9 +2086,18 @@ class Terrain {
       const near=tile.level===64?163:142;
       const level=(!aerial && d<(detail?near:Math.max(112,near-17))) || (tile.precise && d<(aerial?155:196)) ? 64 : d<(tile.level>=32?304:282) ? 32 : 16;
       if (level===tile.level) continue;
+      if(!tile.levels[level]) {
+        if(!uncached || d<uncached.distance) uncached={tile,level,distance:d};
+        continue;
+      }
       tile.level=level;
-      if (!tile.levels[level]) tile.levels[level]=this.tileGeometry(tile.x,tile.z,level);
       tile.mesh.geometry=tile.levels[level];
+    }
+    // A fast turn or landing can reveal several new tiles at once.
+    if(uncached) {
+      const {tile,level}=uncached;
+      tile.mesh.geometry=tile.levels[level]=this.tileGeometry(tile.x,tile.z,level);
+      tile.level=level;
     }
     this.water.material.uniforms.limit.value=Math.max(1000,prefs.distance+390);
   }
@@ -3766,31 +3784,53 @@ class Vegetation {
       this.world.scene.add(mesh);
     }
     this.grassKey="";
+    this.grassJob=null;
+    this.grassMatrices=new Float32Array(this.grass.instanceMatrix.array.length);
+    this.flowerMatrices=new Float32Array(this.flowers.instanceMatrix.array.length);
+    this.grassMatrix=new THREE.Matrix4();
+    this.grassRotation=new THREE.Quaternion();
+    this.grassUp=vec(0,1,0);
+    this.grassPosition=vec();
+    this.grassScale=vec();
   }
   refreshGrass(focus,prefs) {
     const density=prefs.grass,radius=25+density*.44,step=1.60-density*.0062;
     const cx=Math.floor(focus.x/12)*12,cz=Math.floor(focus.z/12)*12;
     const key=cx+","+cz+","+density;
-    if (key===this.grassKey) return;
-    this.grassKey=key;
-    const w=this.world, matrix=new THREE.Matrix4(), q=new THREE.Quaternion();
-    let g=0,f=0;
+    if(key===this.grassKey || this.grassJob) return;
     const ix=Math.ceil(cx/step),iz=Math.ceil(cz/step),cells=Math.ceil((radius+10)/step);
-    for (let i=ix-cells;i<=ix+cells;i++) for(let j=iz-cells;j<=iz+cells;j++) {
-      if (g>=16000) break;
+    this.grassJob={
+      key,cx,cz,radius,step,minX:ix-cells,minZ:iz-cells,width:cells*2+1,
+      index:0,grass:0,flowers:0
+    };
+  }
+  prepareGrass() {
+    const job=this.grassJob;
+    if(!job || !this.grass.visible) return;
+    const {cx,cz,radius,step,minX,minZ,width}=job;
+    const count=width*width;
+    const until=Math.min(job.index+1050,count);
+    const w=this.world, matrix=this.grassMatrix, q=this.grassRotation, point=this.grassPosition, scale=this.grassScale;
+    for(;job.index<until && job.grass<16000;job.index++) {
+      const i=minX+Math.floor(job.index/width),j=minZ+job.index%width;
       const x=(i+hash(i,j,93))*step,z=(j+hash(i,j,11))*step;
-      if (dist(x,z,cx,cz)>radius+8 || (w.terrain.surface(x,z)!=="grass") || !this.suitable(x,z,.10)) continue;
+      if (dist(x,z,cx,cz)>radius+8 || w.terrain.surface(x,z)!=="grass" || !this.suitable(x,z,.10)) continue;
       const size=.62+hash(i,j,46)*.92;
       const y=w.terrain.height(x,z);
-      q.setFromAxisAngle(vec(0,1,0),hash(i,j,619)*TAU);
-      matrix.compose(vec(x,y-.045,z),q,vec(size,size,size));
-      this.grass.setMatrixAt(g++,matrix);
-      if (f<730 && hash(i,j,198)>.97) this.flowers.setMatrixAt(f++,matrix);
+      q.setFromAxisAngle(this.grassUp,hash(i,j,619)*TAU);
+      matrix.compose(point.set(x,y-.045,z),q,scale.setScalar(size));
+      matrix.toArray(this.grassMatrices,job.grass++*16);
+      if(job.flowers<730 && hash(i,j,198)>.97) matrix.toArray(this.flowerMatrices,job.flowers++*16);
     }
-    this.grass.count=g;
-    this.flowers.count=f;
+    if(job.index<count && job.grass<16000) return;
+    this.grass.count=job.grass;
+    this.flowers.count=job.flowers;
+    this.grass.instanceMatrix.array.set(this.grassMatrices.subarray(0,job.grass*16));
+    this.flowers.instanceMatrix.array.set(this.flowerMatrices.subarray(0,job.flowers*16));
     this.grass.instanceMatrix.needsUpdate=this.flowers.instanceMatrix.needsUpdate=true;
     this.grassUniforms.grassRadius.value=radius;
+    this.grassKey=job.key;
+    this.grassJob=null;
   }
   update(focus,clock,prefs,aerial) {
     const low=prefs.preset==="low",medium=prefs.preset==="medium";
@@ -3850,7 +3890,7 @@ class World {
         const x=origin.x+dx,z=origin.z+dz,y=this.collision.floor(x,z,origin.y+.3,.12).y;
         if(Math.abs(y-origin.y)>.3 || this.collision.blocked(x,y,z,1,.47)) continue;
         if(this.stashes.some(other=>other.position.distanceToSquared(vec(x,y,z))<1.35**2)) continue;
-        this.stashes.push({kind:"chest",position:vec(x,y,z),building:stash.building});
+        this.stashes.push({kind:"chest",position:vec(x,y,z),building:stash.building,bonus:true});
         break;
       }
     }
@@ -4877,19 +4917,19 @@ class CharacterModel {
   }
   update(dt,viewer,hideBody) {
     const a=this.actor;
+    const dive=a.state==="dive",glide=a.state==="glide",corpse=a.state==="dead";
+    const distance=a.p.distanceToSquared(viewer);
+    const detail=a.id===0?72:this.game.settings.values.preset==="low"?43:64;
+    this.root.visible=a.netVisible!==false && a.state!=="bus" && (!corpse || a.deathAge<10) && distance<430**2;
+    if(!this.root.visible) return;
     this.root.position.copy(a.p);
     this.root.rotation.y=a.yaw;
-    const dive=a.state==="dive",glide=a.state==="glide",corpse=a.state==="dead";
     this.glider.visible=!hideBody && (glide || dive && a.gliderOpening>.05);
     this.glider.scale.setScalar(Math.max(.02,a.gliderOpening));
     this.equip(a.inBuild || dive || glide || corpse ? "" : a.held()?.id || "");
-    const distance=this.root.position.distanceToSquared(viewer);
-    const detail=a.id===0?72:this.game.settings.values.preset==="low"?43:64;
-    this.root.visible=a.netVisible!==false && a.state!=="bus" && (!corpse || a.deathAge<10) && distance<430**2;
-    this.high.visible=this.root.visible && !hideBody && distance<=detail**2;
-    this.low.visible=this.root.visible && !hideBody && !this.high.visible;
+    this.high.visible=!hideBody && distance<=detail**2;
+    this.low.visible=!hideBody && !this.high.visible;
     this.slot.visible=!hideBody && distance<165**2;
-    if (!this.root.visible) return;
     this.poseClock+=dt;
     if (distance>detail**2 && this.poseClock<.067 && !corpse) return;
     dt=this.poseClock;
@@ -6490,7 +6530,11 @@ class LootAssets {
       mesh(mergeParts([boxAt(0,.044,0,.88,.063,.57),boxAt(-.317,.22,0,.092,.31,.55),boxAt(.317,.22,0,.092,.31,.55),
         boxAt(0,.232,.278,.21,.13,.052)]),rich));
     const gem=new THREE.MeshStandardMaterial({color:"#f2b45a",emissive:"#ffb04c",emissiveIntensity:2.8,roughness:.47});
-    caseBase.add(mesh(boxAt(0,.259,.308,.058,.046,.024),gem));
+    const latch=mesh(boxAt(0,.259,.308,.058,.046,.024),gem);
+    latch.name="chest-latch";
+    caseBase.add(latch);
+    this.chestLatchOff=gem.clone();
+    this.chestLatchOff.emissiveIntensity=0.03;
     lid.position.set(0,.357,-.262);
     lid.add(mesh(boxAt(0,.059,.264,.86,.126,.56),store),
       mesh(mergeParts([boxAt(-.319,.096,.261,.092,.092,.58),boxAt(.319,.096,.261,.092,.092,.58),boxAt(0,.008,.561,.234,.06,.029)]),rich));
@@ -6538,7 +6582,7 @@ class LootAssets {
 }
 
 class Loot {
-  constructor(game,populate=true) {
+  constructor(game,populate=true,serverContainerCount=0) {
     this.game=game;
     this.assets=game.lootAssets;
     this.items=[];
@@ -6551,6 +6595,9 @@ class Loot {
     this.commonLight.visible=false;
     game.objects.add(this.commonLight);
     for (const stash of game.world.stashes) {
+      // Older online servers use the original layout. Extra local containers
+      // would look usable, but the server cannot open them.
+      if(!populate && stash.bonus && this.containers.length>=serverContainerCount) continue;
       const p=stash.position;
       if (!populate && (stash.kind==="gun" || stash.kind==="med")) continue;
       if (stash.kind==="gun") {
@@ -6569,7 +6616,8 @@ class Loot {
         obj.visible=false;
         this.game.objects.add(obj);
         const chest=stash.kind==="chest";
-        const container={...stash,p,obj,lid:obj.children[1],open:false,duration:chest?.36:.26,lidAngle:0};
+        const container={...stash,p,obj,lid:obj.children[1],latch:chest?obj.getObjectByName("chest-latch"):null,
+          open:false,duration:chest?.36:.26,lidAngle:0};
         container.netId=this.containers.length;
         this.containers.push(container);this.index(container);
       }
@@ -6642,8 +6690,7 @@ class Loot {
       if (!actor.id) this.game.ui.notice(itemName(target.item)+(target.item.kind==="gun"?" · "+RARITIES[target.item.tier]:""),1.15);
       return true;
     }
-    target.open=true;
-    this.unindex(target);
+    this.openContainer(target);
     this.game.onLoot?.("open",target);
     this.game.emitNoise(actor,target.p,target.kind, target.kind==="chest"?27:16);
     const {p,building}=target;
@@ -6679,16 +6726,22 @@ class Loot {
     }
     return true;
   }
-  target(player) {
-    const p=player.p, eye=p.clone().add(vec(0,player.crouching?1.04:1.49,0)), direction=aimVector(player.yaw,player.pitch*.32);
-    const camera=this.game.headless?eyePosition(player):this.game.renderer.camera.position;
-    const crosshair=this.game.headless?aimVector(player.yaw,player.pitch):this.game.cameraRig.direction;
+  openContainer(container) {
+    container.open=true;
+    this.unindex(container);
+    if(container.latch) container.latch.material=this.assets.chestLatchOff;
+  }
+  target(player,preferred=null) {
+    const p=player.p, eye=p.clone().add(vec(0,player.crouching?1.04:1.49,0));
+    const direction=aimVector(player.yaw,player.pitch*.32);
+    const camera=eyePosition(player),crosshair=aimVector(player.yaw,player.pitch);
     let best=null,score=Infinity;
     const check=(entry,point,door=false)=>{
+      if(entry.taken || !door && entry.open || entry.node?.destroyed) return;
       if (Math.abs(p.y-point.y)>(door?1.37:.98)) return;
       const pos=point.clone().add(vec(0,door?0:.27,0));
       const diff=pos.clone().sub(eye),d=diff.length();
-      if (d>3.25) return;
+      if (d>3.25 || d<.01) return;
       diff.multiplyScalar(1/d);
       const facing=diff.dot(direction);
       if (facing<-.30 || facing<.25 && d>1.94) return;
@@ -6700,32 +6753,53 @@ class Loot {
       if (hit && hit.entry?.door !== entry && !(entry.node && hit.entry?.node === entry.node)) return;
       score=value; best=entry;
     };
-    for(const entry of this.local(p.x,p.z,3.52,this.scratch)) if(!entry.node?.destroyed) check(entry,entry.p);
+    if(preferred?.duration) {
+      // Keep the search on this box while it stays visible and within reach.
+      check(preferred,preferred.p);
+      if(best) return best;
+    }
+    for(const entry of this.local(p.x,p.z,3.52,this.scratch)) check(entry,entry.p);
     for(const door of this.game.world.doors) if(door.object.visible && areaDistance(p,door.target.x,door.target.z)<3.54) check(door,door.target,true);
     return best;
   }
-  interact(player,dt,input) {
-    const target=this.target(player);
-    if (target!==player.interaction) { player.interaction=target; player.holdTime=0; player.interactionDone=false; }
-    if (!input.down("use")) { player.holdTime=0; player.interactionDone=false; }
-    if (!target || player.interactionDone) return;
+  resetInteraction(player) {
+    player.holdTarget=null;
+    player.holdTime=0;
+    player.interactionDone=false;
+  }
+  interact(player,dt,input,requested=null) {
+    const held=input.down("use");
+    const pressed=input.just("use");
+    if(!held) this.resetInteraction(player);
+    const selected=player.holdTarget;
+    const target=player.interaction=this.target(player,selected || (pressed?requested:null));
+    if(selected && selected!==target) {
+      player.holdTarget=null;
+      player.holdTime=0;
+      player.interactionDone=true;
+    }
+    if(!target || player.interactionDone) return;
     if(target instanceof Door) {
-      if(input.just("use")) {
+      if(pressed) {
         target.set(!target.open,this.game.audio);
         this.game.emitNoise(player,target.target,"door",19);
+        player.interactionDone=held;
       }
-      return;
+    } else if(target.kind==="item") {
+      if(pressed) {
+        this.take(player,target);
+        player.interactionDone=held;
+      }
+    } else if(held) {
+      player.holdTarget=target;
+      player.holdTime+=dt;
+      if(player.holdTime>=target.duration) {
+        this.take(player,target);
+        player.holdTarget=null;
+        player.holdTime=0;
+        player.interactionDone=true;
+      }
     }
-    if (target.kind==="item") {
-      if(input.just("use")) this.take(player,target);
-      return;
-    }
-    if (!input.down("use")) return;
-    player.holdTime+=dt;
-    if(player.holdTime<target.duration) return;
-    this.take(player,target);
-    player.holdTime=0;
-    player.interactionDone=true;
   }
   update(dt,viewer,clock) {
     let nearest=null,range=26;
@@ -8796,10 +8870,10 @@ class UI {
     }
     const comparison=interacting?this.compare(target,held):"";
     $("lootCompare").textContent=comparison;show("lootCompare",!!comparison);
-    const action=p.action, showingAction=action && action.type!=="swing", hold=interacting && p.holdTime>0;
+    const action=p.action, showingAction=action && action.type!=="swing", hold=interacting && target.duration && p.holdTime>0;
     show("progress",showingAction || hold);
     if(showingAction || hold) {
-      $("progressText").textContent=showingAction?(action.type==="reload"?"Reloading":"Using "+itemName(action.item)):"Interacting";
+      $("progressText").textContent=showingAction?(action.type==="reload"?"Reloading":"Using "+itemName(action.item)):target.kind==="chest"?"Searching chest":"Searching";
       const percent=showingAction?1-action.remaining/action.total:p.holdTime/target.duration;
       $("progressFill").style.width=clamp(percent*100,0,100)+"%";
     }
@@ -9654,7 +9728,7 @@ class Game {
     this.actors=[this.player,...bots];
     if(online) this.debug.disableForOnline();
     this.fx=new Particles(this.objects,this.world);
-    this.loot=new Loot(this,!online);
+    this.loot=new Loot(this,!online,online?.containerCount);
     this.builds=new BuildSystem(this);
     this.combat=new Combat(this);
     this.storm=new Storm(this);
@@ -9914,27 +9988,27 @@ class Game {
       if(actor.id) actor.act(dt);
     }
     if(this.state!=="spectate") this.player.input(dt);
-    const camera=this.renderer.camera;
-    const state=this.state;
-    const viewer=this.player.state==="bus"?m.bus.position:camera.position;
     this.cameraRig.update(dt);
-    if (this.player.state==="ground" && this.isLive()) this.loot.interact(this.player,dt,this.input);
-    for(const actor of this.actors) {
-      const bodyHidden=this.cameraRig.firstPerson && actor===(state==="spectate"&&this.killer?.alive?this.killer:this.player);
-      actor.model.update(dt,viewer,bodyHidden);
-    }
+    if(this.player.state==="ground" && this.isLive()) this.loot.interact(this.player,dt,this.input);
+    else this.loot.resetInteraction(this.player);
     this.builds.ghost.visible=false;
     if(this.isLive()) this.player.combat();
     this.builds.update(dt);
     while(this.sounds.length && m.age-this.sounds[0].at>2.45) this.sounds.shift();
-    this.fx.update(dt,this.world.terrain);
-    this.loot.update(dt,viewer,this.clock);
-    this.storm.draw(this.clock,this.cameraRig.focus);
-    this.ui.tick(dt);
     this.recordReplay();
     this.input.finishStep();
     if(this.state==="spectate" && m.age>=this.spectateUntil) this.end(false);
     else if(this.state==="active" && this.player.alive && this.actors.every(a=>a===this.player || !a.alive)) this.end(true);
+  }
+  presentMatch(dt) {
+    if(this.state==="result") return;
+    const viewer=this.renderer.camera.position;
+    const watched=this.state==="spectate" && this.killer?.alive?this.killer:this.player;
+    for(const actor of this.actors) actor.model.update(dt,viewer,this.cameraRig.firstPerson && actor===watched);
+    this.fx.update(dt,this.world.terrain);
+    this.loot.update(dt,viewer,this.clock);
+    this.storm.draw(this.clock,this.cameraRig.focus);
+    this.ui.tick(dt);
   }
   paint(dt) {
     if(this.debug?.flying) this.debug.moveCamera(dt);
@@ -9950,10 +10024,11 @@ class Game {
       this.world.update(focus,this.clock,prefs,aerial);
       this.visibilityAt=this.clock+(aerial?.145:.092);
     }
+    this.world.vegetation.prepareGrass();
     this.world.vegetation.grassUniforms.grassClock.value=this.clock;
     this.world.animate(this.clock);
     this.atmosphere.update(this,dt,aerial);
-    this.world.terrain.updateReflection(camera,this.clock,prefs,dt);
+    this.world.terrain.updateReflection(camera,this.clock,prefs,dt,(this.renderer.performanceScale??1)>=.86);
     if(this.fx) {
       this.fx.effectBudget=prefs.preset==="low"?.42:prefs.preset==="medium"?.68:1;
       this.fx.lightMuzzles(camera);
@@ -10022,6 +10097,7 @@ class Game {
       this.navigation.flush();
       const count=Math.ceil(dt/.033);
       for(let i=0;i<count;i++) this.step(dt/count);
+      this.presentMatch(dt);
     }
     this.paint(dt);
   }

@@ -308,6 +308,9 @@ export class OnlineMatch {
     this.nextMap=0;
     this.nextInteraction=0;
     this.interactionTarget=null;
+    this.useContainer=null;
+    this.search=null;
+    this.serverSearch=Number.isInteger(info.containerCount);
     const match=g.match;
     match.start.fromArray(info.start);
     match.end.fromArray(info.end);
@@ -368,6 +371,7 @@ export class OnlineMatch {
         const snap=!actor.netPosition || actor.state!==state || actor.netPosition.distanceToSquared(actor.p)>260;
         actor.netPosition??=vec();
         actor.netPosition.fromArray(row,1);
+        actor.netVY=row[16]??0;
         actor.netYaw=row[4];
         actor.netPitch=row[5];
         if(snap) {
@@ -429,6 +433,8 @@ export class OnlineMatch {
     });
     p.reserve=data.reserve;
     p.materials=data.materials;
+    this.search=data.search;
+    this.searchAt=performance.now();
     p.action=data.action?{type:data.action[0],total:data.action[1],remaining:data.action[2],item:p.held()}:null;
     [p.kills,p.damageDone,p.shotsFired,p.shotsHit,p.looted]=data.stats;
     this.out=data.out;
@@ -468,8 +474,9 @@ export class OnlineMatch {
   openContainer(id) {
     const loot=this.game.loot,entry=loot.containers[id];
     if(!entry || entry.open) return;
-    entry.open=true;
-    loot.unindex(entry);
+    loot.openContainer(entry);
+    if(this.interactionTarget===entry) this.interactionTarget=null;
+    if(this.useContainer===entry) this.useContainer=null;
   }
 
   placeBuild(row) {
@@ -501,6 +508,7 @@ export class OnlineMatch {
       case "open": {
         const entry=g.loot.containers[event[1]];
         if(entry) g.audio.event(entry.kind==="car"?"metal":entry.kind,entry.p,.64);
+        if(entry?.kind==="chest") g.fx.burst(entry.p.clone().add(vec(0,.43,0)),"hit",12,.58);
         this.openContainer(event[1]);break;
       }
       case "build":
@@ -593,10 +601,17 @@ export class OnlineMatch {
       if(i.just("dropItem")) g.dropSelected();
       this.scroll=i.takeWheelStep()||this.scroll;
     } else { this.taps=0;this.scroll=0; }
+    if(!(held&ACTION.use) || p.state!=="ground") this.useContainer=null;
+    else if(i.just("use")) {
+      const target=g.loot.target(p);
+      this.useContainer=target?.duration?target:null;
+    }
     this.held=held;
     if(now>=this.nextInput || this.taps || this.scroll) {
       this.nextInput=now+30;
-      if(this.send({t:"input",n:++this.seq,h:held,j:this.taps,y:p.yaw,p:p.pitch,w:this.scroll})) {
+      const packet={t:"input",n:++this.seq,h:held,j:this.taps,y:p.yaw,p:p.pitch,w:this.scroll};
+      if(this.useContainer && (this.taps&ACTION.use)) packet.container=this.useContainer.netId;
+      if(this.send(packet)) {
         this.taps=0;
         this.scroll=0;
       }
@@ -612,7 +627,6 @@ export class OnlineMatch {
     const current=this.current;
     const time=current?clamp((now-this.arrivedAt)/1000,0,.16):0;
     const shotsDecay=dt*6.3;
-    const visibleCamera=(g.state==="spectate" || !p.alive) && g.killer?.alive?g.killer:p;
     for(const actor of this.remote.values()) {
       actor.age+=dt;
       actor.shotPose=Math.max(0,actor.shotPose-shotsDecay);
@@ -625,6 +639,7 @@ export class OnlineMatch {
         if(actor.alive) {
           target.x+=actor.moveX*lead;
           target.z+=actor.moveZ*lead;
+          if(!actor.grounded) target.y+=actor.netVY*lead;
         }
         actor.p.lerp(target,1-Math.exp(-17*dt));
         actor.yaw+=angleDiff(actor.netYaw,actor.yaw)*(1-Math.exp(-19*dt));
@@ -686,29 +701,26 @@ export class OnlineMatch {
     p.viewSway.multiplyScalar(Math.exp(-10*dt));
     if(p.action) p.action.remaining=Math.max(0,p.action.remaining-dt);
     g.cameraRig.update(dt);
-    const viewer=g.renderer.camera.position;
-    for(const actor of this.remote.values()) {
-      if(!actor.netVisible && actor!==p) {actor.model.root.visible=false;continue;}
-      actor.model.update(dt,viewer,actor===visibleCamera);
-    }
     if(p.state!=="ground") this.interactionTarget=null;
     else if(now>=(this.nextInteraction||0) || g.input.just("use")) {
       this.nextInteraction=now+55;
-      this.interactionTarget=g.loot.target(p);
+      this.interactionTarget=g.loot.target(p,this.useContainer);
     }
     const target=this.interactionTarget;
 
     if(p.interaction!==target) p.holdTime=0;
     p.interaction=target;
-    if(target && target.kind!=="item" && target.duration && controls && g.input.down("use")) p.holdTime=Math.min(target.duration||.25,p.holdTime+dt);
-    else p.holdTime=0;
+    if(!target?.duration || target.open || !controls || !g.input.down("use")) p.holdTime=0;
+    else if(this.serverSearch) {
+      const search=this.search;
+      p.holdTime=search?.[0]===target.netId
+        ? Math.min(target.duration*.98,search[1]+clamp((now-this.searchAt)/1000,0,.08))
+        : 0;
+    } else p.holdTime=Math.min(target.duration*.98,p.holdTime+dt);
     g.builds.ghost.visible=false;
     if(controls && p.inBuild && p.state==="ground") g.builds.preview(p);
     g.builds.update(dt);
-    g.fx.update(dt,g.world.terrain);
-    g.loot.update(dt,viewer,g.clock);
-    g.storm.draw(g.clock,g.cameraRig.focus);
-    g.ui.tick(dt);
+    g.presentMatch(dt);
     if(current) $("alive").textContent=String(current.alive);
     if(g.modal==="map" && now>=(this.nextMap||0)) {
       this.nextMap=now+180;
