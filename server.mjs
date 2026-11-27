@@ -9,7 +9,7 @@ import { Match,outfitCount } from "./match.mjs";
 import { PROTOCOL, MAX_PLAYERS, TICK } from "./dist/protocol.mjs";
 
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),"dist");
-const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".mjs":"text/javascript; charset=utf-8",".json":"application/json; charset=utf-8",".css":"text/css; charset=utf-8",".svg":"image/svg+xml",".txt":"text/plain; charset=utf-8"};
+const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".mjs":"text/javascript; charset=utf-8",".json":"application/json; charset=utf-8",".css":"text/css; charset=utf-8",".svg":"image/svg+xml",".txt":"text/plain; charset=utf-8",".mp3":"audio/mpeg"};
 const alphabet="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const publicWait=15000, privateIdle=20*60*1000, endGrace=6500;
 const frameMs=TICK*1000;
@@ -199,6 +199,9 @@ export async function createServer({
       });
       const filtered=events.filter(event=>{
         if(event[0]==="notice") return event[1]===peer.id;
+        if(event[0]==="step") return event[1]!==peer.id && (event[7]-eye.p.x)**2+(event[9]-eye.p.z)**2<(event[6]+7)**2;
+        if(event[0]==="land") return (event[4]-eye.p.x)**2+(event[6]-eye.p.z)**2<36**2;
+        if(event[0]==="foley") return (event[4]-eye.p.x)**2+(event[6]-eye.p.z)**2<27**2;
         if(event[0]==="shot") return (event[3]-eye.p.x)**2+(event[5]-eye.p.z)**2<290**2;
         if(event[0]==="trace") return (event[2]-eye.p.x)**2+(event[4]-eye.p.z)**2<290**2;
         return event[0]!=="hit" || event[1]===peer.id || event[2]===peer.id;

@@ -1,0 +1,39 @@
+Grayline Highwater audio credits
+
+Highwater's recorded and designed sound effects were trimmed, mixed, and
+encoded from the following CC0 1.0 sounds.
+https://creativecommons.org/publicdomain/zero/1.0/
+
+Grass, rocky road, and stone footsteps from TDC FOOTSTEPS, edited by
+Standard of Iron.
+https://github.com/djeada/Standard-of-Iron/blob/main/docs/AUDIO_LICENSES.md
+
+Hard Footstep 1 and 4 and Step 4 by OwlishMedia.
+https://opengameart.org/content/sound-effects-pack
+
+Key Lock Door sounds by OwlishMedia, used for doors, containers, and reloads.
+https://opengameart.org/content/202-more-sound-effects
+
+Cloth, Cloth Heavy, and Metal Small sounds by artisticdude.
+https://opengameart.org/content/rpg-sound-pack
+
+Dirt/gravel footstep 1 by Yoyodaman234.
+https://freesound.org/people/Yoyodaman234/sounds/166511/
+
+wood_10a_startassneakers_walk.wav by sturmankin.
+https://freesound.org/people/sturmankin/sounds/273374/
+
+Footstep Metal 1 by GiocoSound.
+https://freesound.org/people/GiocoSound/sounds/421134/
+
+Footsteps in a water puddle by launemax.
+https://freesound.org/people/launemax/sounds/249911/
+
+Pistol Shot by LeMudCrab.
+https://freesound.org/people/LeMudCrab/sounds/163456/
+
+Gun_Shot_86 by SignatureSoundsOrg.
+https://freesound.org/people/SignatureSoundsOrg/sounds/876005/
+
+Shotgun 001 - Single shot by pgi.
+https://freesound.org/people/pgi/sounds/257963/

@@ -9,6 +9,7 @@ await loadEngine();
 const NONE=()=>{};
 const round=(n,places=100)=>Math.round(n*places)/places;
 const position=p=>[round(p.x),round(p.y),round(p.z)];
+const NET_FOLEY=new Set(["magOut","magIn","bolt","swap","dry","jump"]);
 const ACT_RELOAD=1, ACT_MED=2, ACT_SWING=3;
 const actionType=type=>type==="reload"?ACT_RELOAD:type==="med"?ACT_MED:type==="swing"?ACT_SWING:0;
 const wrapAngle=angle=>Math.atan2(Math.sin(angle),Math.cos(angle));
@@ -41,7 +42,12 @@ export class Match {
     game.navigation.queue.clear();
     game.atmosphere={daylight:battleSettings.values.daylight,conditions:WEATHER.clear,moteMap:null};
     game.audio={
-      event:NONE,foot:NONE,
+      event:(key,p,strength)=>{
+        if(!p || !NET_FOLEY.has(key)) return;
+        const actor=this.actors.find(actor=>actor.p===p);
+        if(actor) emit(["foley",actor.id,key,strength,...position(p)]);
+      },
+      foot:NONE,landing:NONE,
       shot:(weapon,p)=>emit(["shot",this.shooter?.id??0,weapon,...position(p)])
     };
     game.fx={
@@ -106,6 +112,10 @@ export class Match {
       if(kind==="remove") emit(["debuild",piece.key]);
       if(kind==="wear") emit(["wear",piece.key,round(piece.hp)]);
     };
+    game.onFootstep=(actor,strength,sprint,radius)=>{
+      emit(["step",actor.id,actor.surface,round(strength),+sprint,actor.stepSide,round(radius),...position(actor.p)]);
+    };
+    game.onLanding=(actor,strength)=>emit(["land",actor.id,actor.surface,round(strength),...position(actor.p)]);
     game.world.onBreak=id=>emit(["break",id]);
     game.world.onDoor=(id,open)=>emit(["door",id,open]);
     const uiDamage=game.damage.bind(game);
@@ -135,7 +145,7 @@ export class Match {
       roster:this.actors.map(({id,name,outfit})=>[id,name,outfit]),
       phases:storm.phases,
       start:position(match.start),end:position(match.end),yaw:match.yaw,duration:match.duration,
-      containerCount:loot.containers.length,
+      containerCount:loot.containers.length,momentum:true,
       opened:loot.containers.filter(entry=>entry.open).map(entry=>entry.netId),
       items:loot.items.filter(entry=>!entry.taken).map(entry=>this.lootRow(entry)),
       doors:world.doors.filter(door=>door.open).map(door=>door.netId),

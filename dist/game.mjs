@@ -1,6 +1,7 @@
 import { OnlineMatch } from "./online-client.mjs";
+import { AUDIO_SAMPLES } from "./audio-samples.mjs";
 
-// Grayline: Highwater. Dependencies are pinned and game assets are generated below.
+// Grayline: Highwater. The island, models, and textures are generated below.
 const $ = id => document.getElementById(id);
 const show = (id, visible) => { $(id).hidden = !visible; };
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
@@ -4973,7 +4974,11 @@ class Competitor {
     this.flinch=0;
     this.shotPose=0;
     this.cooldown=0;
-    this.stepClock=0;
+    this.stepProgress=.52;
+    this.stepSide=1;
+    this.lastStep=-Infinity;
+    this.lastLanding=-Infinity;
+    this.landingStrength=0;
     this.inBuild=false;
     this.usingPick=true;
     this.aiming=false;
@@ -5109,12 +5114,13 @@ class Competitor {
     this.p.y+=this.vy*dt;
     if (dive && this.p.y-landing<28) this.deploy();
     if (this.p.y<=landing) {
+      const impact=-this.vy;
       this.state="ground";
       this.p.y=landing;
       this.vy=0;
       this.surface=ground.y<SEA-.3?"water":ground.surface;
       this.grounded=true;
-      this.game.landed(this);
+      this.game.landed(this,true,impact);
     }
   }
   walk(dt,vx,vz,jump=false) {
@@ -5145,11 +5151,13 @@ class Competitor {
     };
     move(p.x+vx*dt,p.z);
     move(p.x,p.z+vz*dt);
-    this.moveX=(p.x-oldX)/Math.max(.001,dt);
-    this.moveZ=(p.z-oldZ)/Math.max(.001,dt);
+    const movedX=p.x-oldX,movedZ=p.z-oldZ;
+    this.moveX=movedX/Math.max(.001,dt);
+    this.moveZ=movedZ/Math.max(.001,dt);
     this.speed=Math.hypot(this.moveX,this.moveZ);
     const support=c.floor(p.x,p.z,p.y+(this.grounded?step:.105),radius,false,true);
     const min=Math.max(support.y,SEA-.64);
+    this.surface=support.y<SEA-.25?"water":support.surface;
     if (jump && this.grounded) {
       this.vy=this.surface==="water"?3.4:5.32;
       this.grounded=false;
@@ -5165,24 +5173,28 @@ class Competitor {
         this.vy=-.35;
       }
       if (this.vy<=0 && p.y<=min) {
-        if (this.vy<-4.2) this.game.landed(this,false);
+        const impact=-this.vy;
         p.y=min;
         this.vy=0;
         this.grounded=true;
+        if(impact>2.9) this.game.landed(this,false,impact);
       }
     } else {
       p.y=min;
       this.vy=0;
     }
-    this.surface=support.y<SEA-.25?"water":support.surface;
-    this.stepClock-=dt;
-    if (this.grounded && this.speed>1 && this.stepClock<=0) {
-      this.stepClock=(this.crouching?.66:this.speed>4.8?.28:.42);
-      this.game.audio.foot(this.surface,p,this.crouching?.08:this.speed>4.8?.64:.38,!this.crouching && this.speed>4.8);
-      this.game.fx.foot(this);
-      const footRange=this.crouching?7:this.speed>4.85?29:17;
-      this.game.emitNoise(this,p,"foot",footRange*(this.surface==="grass"?.75:this.surface==="metal"?1.19:1));
+    if(!this.grounded || this.speed<.48) {
+      if(this.age-this.lastStep>.3) this.stepProgress=.52;
+      return;
     }
+    const sprinting=!this.crouching && this.speed>4.8;
+    const pace=this.crouching?1.04:lerp(.98,1.67,smooth(1.8,6.3,this.speed));
+    this.stepProgress+=Math.hypot(movedX,movedZ)/pace;
+    if(this.stepProgress<1 || this.age-this.lastStep<(this.crouching?.30:.18)) return;
+    this.stepProgress%=1;
+    this.stepSide=-this.stepSide;
+    this.lastStep=this.age;
+    this.game.footstep(this,this.crouching?.14:sprinting?.67:lerp(.26,.51,smooth(.5,4.4,this.speed)),sprinting);
   }
 }
 
@@ -5190,6 +5202,8 @@ class Player extends Competitor {
   constructor(game,id=0,name="You",outfit=0) {
     super(game,id,name,outfit);
     this.human=true;
+    this.driveX=0;
+    this.driveZ=0;
     this.viewSway=vec();
     this.crouchToggle=false;
     this.aimToggle=false;
@@ -5304,20 +5318,42 @@ class Player extends Competitor {
     this.viewSway.multiplyScalar(Math.exp(-10*dt));
     if (this.state==="bus" || !this.alive) return;
     this.recoverAim(dt);
-    const f=Number(input.down("forward"))-Number(input.down("back"));
-    const r=Number(input.down("right"))-Number(input.down("left"));
-    const direction=aimVector(this.yaw), right=vec(Math.cos(this.yaw),0,-Math.sin(this.yaw));
-    direction.multiplyScalar(f).addScaledVector(right,r);
-    if (direction.lengthSq()>1) direction.normalize();
-    if (this.state==="dive" || this.state==="glide") {
-      this.airborne(dt,direction.x,direction.z,f>0);
+    this.moveFromInput(dt,{
+      forward:Number(input.down("forward"))-Number(input.down("back")),
+      right:Number(input.down("right"))-Number(input.down("left")),
+      crouch:s.crouchMode==="toggle"?this.crouchToggle:input.down("crouch"),
+      aim:this.wantsAim(),
+      sprint:input.down("sprint"),
+      jump:input.just("jump")
+    });
+  }
+  moveFromInput(dt,{forward,right,crouch,aim,sprint,jump},momentum=true) {
+    const cosine=Math.cos(this.yaw),sine=Math.sin(this.yaw);
+    const norm=1/Math.max(1,Math.hypot(forward,right));
+    const x=(right*cosine-forward*sine)*norm,z=(-right*sine-forward*cosine)*norm;
+    if(this.state==="dive" || this.state==="glide") {
+      this.driveX=this.driveZ=0;
+      this.airborne(dt,x,z,forward>0);
       return;
     }
-    this.crouching=s.crouchMode==="toggle"?this.crouchToggle:input.down("crouch");
-    if (!this.crouching && this.game.world.collision.blocked(this.p.x,this.p.y,this.p.z,1.66,.29)) this.crouching=true;
-    this.aiming=this.wantsAim();
-    const speed=this.crouching?2.03:this.action?.type==="med"?2.16:this.aiming?2.60:input.down("sprint") && f>0?6.18:4.28;
-    this.walk(dt,direction.x*speed,direction.z*speed,input.just("jump"));
+    this.crouching=crouch || this.game.world.collision.blocked(this.p.x,this.p.y,this.p.z,1.66,.29);
+    this.aiming=!!aim;
+    const speed=this.crouching?2.03:this.action?.type==="med"?2.16:this.aiming?2.60:sprint&&forward>0?6.18:4.28;
+    const vx=x*speed,vz=z*speed;
+    if(momentum) {
+      // Use quicker ground braking and gentler in-air steering. Integrate
+      // the same velocity in prediction and on the match server.
+      const braking=vx*this.driveX+vz*this.driveZ<=0 && Math.hypot(this.driveX,this.driveZ)>.05;
+      const response=!this.grounded?5.6:braking?26:this.surface==="water"?12:17;
+      const nextX=damp(this.driveX,vx,response,dt),nextZ=damp(this.driveZ,vz,response,dt);
+      this.walk(dt,(this.driveX+nextX)*.5,(this.driveZ+nextZ)*.5,jump);
+      this.driveX=Math.abs(nextX)<.025?0:nextX;
+      this.driveZ=Math.abs(nextZ)<.025?0:nextZ;
+    } else {
+      this.driveX=vx;
+      this.driveZ=vz;
+      this.walk(dt,vx,vz,jump);
+    }
   }
   combat() {
     if (this.state!=="ground") return;
@@ -5404,6 +5440,7 @@ class Audio {
     this.context=null;
     this.voices=new Set();
     this.routes=new Set();
+    this.lastSample={};
     this.musicAt=0;
     this.musicNote=0;
     this.heartAt=0;
@@ -5457,6 +5494,14 @@ class Audio {
       this.roofRain.filter.Q.value=.91;
       this.beds=[this.wind,this.engine,this.wall,this.stormWind,this.rainBed,this.roofRain,this.shoreBed,this.powerBed];
       this.apply();
+      fetch(new URL("./audio/highwater-foley.mp3",import.meta.url))
+        .then(response=>{
+          if(!response.ok) throw new Error("Audio unavailable");
+          return response.arrayBuffer();
+        })
+        .then(buffer=>c.decodeAudioData(buffer))
+        .then(buffer=>{this.foley=buffer;})
+        .catch(()=>{});
     }
     if (this.context.state==="suspended") this.context.resume().catch(()=>{});
   }
@@ -5500,7 +5545,7 @@ class Audio {
     p.positionY.value=pos.y+.4;
     p.positionZ.value=pos.z;
   }
-  route(pos,strength,filter=17000,range=5,room=this.room,duration=2.9) {
+  route(pos,strength,filter=17000,range=5,room=this.room,duration=2.9,pan=0) {
     const c=this.context;
     const gain=c.createGain();
     gain.gain.value=strength;
@@ -5520,6 +5565,12 @@ class Audio {
       tail=p;
       nodes.push(p);
       tail.connect(room?this.inside:this.outside);
+    } else if(pan && c.createStereoPanner) {
+      const stereo=c.createStereoPanner();
+      stereo.pan.value=pan;
+      tail.connect(stereo);
+      tail=stereo;
+      nodes.push(stereo);
     }
     tail.connect(this.effects);
     const route={nodes, timer:0};
@@ -5560,29 +5611,72 @@ class Audio {
     gain.connect(output);
     this.launch(node,[gain,eq],now,seconds,Math.random()*.54);
   }
-  launch(node,extras,time,seconds,offset=0) {
+  launch(node,extras,time,seconds,offset=0,duration) {
     this.voices.add(node);
     node.onended=()=>{
       this.voices.delete(node);
       node.disconnect();
       extras.forEach(n=>n.disconnect());
     };
-    node.start(time,offset);
+    if(duration===undefined) node.start(time,offset);
+    else node.start(time,offset,duration);
     node.stop(time+seconds+.015);
+  }
+  sample(key,output,volume,pitch=1,delay=0) {
+    const choices=AUDIO_SAMPLES[key];
+    if(!this.foley || !choices) return false;
+    const last=this.lastSample[key];
+    let index=Math.floor(Math.random()*choices.length);
+    if(index===last && choices.length>1) index=(index+1)%choices.length;
+    this.lastSample[key]=index;
+    const [offset,length]=choices[index];
+    const c=this.context,source=c.createBufferSource(),gain=c.createGain();
+    source.buffer=this.foley;
+    source.playbackRate.value=pitch;
+    gain.gain.value=volume;
+    source.connect(gain);
+    gain.connect(output);
+    this.launch(source,[gain],c.currentTime+delay,length/pitch,offset,length);
+    return true;
+  }
+  muffled(pos,world) {
+    if(!world || !this.listener || this.listener.distanceToSquared(pos)<2.6**2) return false;
+    const source=vec(pos.x,pos.y+.4,pos.z);
+    const toward=this.listener.clone().sub(source),length=toward.length();
+    return !!world.collision.cast(source,toward.multiplyScalar(1/length),length-.25,"vision",false);
   }
   event(key,pos=null,strength=1) {
     if (!this.context || this.context.state!=="running" || !SOUND[key] || this.voices.size>88) return;
     if (pos && this.listener && this.listener.distanceToSquared(pos)>124**2) return;
-    const output=key==="hover" || key==="click" ? this.ui : this.route(pos,strength,16000,key==="land"?4.4:3.4);
+    const clip=key==="jump" || key==="swap" ? "gear" : key;
+    const blocked=!!AUDIO_SAMPLES[clip] && pos && this.muffled(pos,this.world);
+    const output=key==="hover" || key==="click" ? this.ui : this.route(pos,strength*(blocked?.45:1),blocked?1500:16000,key==="land"?4.4:3.4);
+    if (key!=="wood" && key!=="metal" && key!=="stone" &&
+        this.sample(clip,output,clip==="gear"?.6:.77,.94+Math.random()*.13)) {
+      if(key==="chest") this.voice("sine",494,714,.21,.08,output,.12);
+      return;
+    }
     for (const [shape,a,b,c,d] of SOUND[key]) {
       if (this.noise[shape]) this.noiseVoice(shape,a,b,c,output,0,.92+Math.random()*.17);
       else this.voice(shape,a,b,c,d,output);
     }
   }
-  foot(surface,pos,loudness,sprinting) {
+  foot(surface,pos,loudness,sprinting,local=false,side=0,world=this.world) {
+    this.stepSound(surface,pos,loudness,sprinting,local,side,world,false);
+  }
+  landing(surface,pos,strength,local,world) {
+    this.stepSound(surface,pos,.36+strength*.62,false,local,0,world,true);
+  }
+  stepSound(surface,pos,loudness,sprinting,local,side,world,landing) {
     if (this.context?.state!=="running" || !this.listener || this.listener.distanceToSquared(pos)>69**2 || this.voices.size>76) return;
-    const output=this.route(pos,loudness,loudness<.12?2500:6400,2.8);
-    if (surface==="wood" || surface==="metal" || surface==="stone") {
+    const blocked=!local && this.muffled(pos,world);
+    const filter=blocked?1300:loudness<.18?3900:surface==="asphalt"?5600:9200;
+    const output=this.route(local?null:pos,loudness*(blocked?.39:1),filter,3.25,this.room,1.3,local?side*.13:0);
+    const clip=surface==="asphalt"?"concrete":AUDIO_SAMPLES[surface]?surface:"dirt";
+    const pitch=(landing?.78:sprinting?.96:surface==="asphalt"?.86:.91)+Math.random()*.15;
+    if (this.sample(clip,output,.88,pitch)) {
+      if(sprinting) this.sample("gear",output,.17,.94+Math.random()*.15,.038);
+    } else if (surface==="wood" || surface==="metal" || surface==="stone") {
       const wood=surface==="wood",metal=surface==="metal";
       this.noiseVoice("grain",.103,wood?1100:2050,.31,output,0,1+Math.random()*.16);
       this.voice(metal?"sine":"triangle",wood?123:metal?540:249,wood?69:metal?513:154,metal?.18:.105,.27,output);
@@ -5592,10 +5686,7 @@ class Audio {
         else this.voice(shape,a,b,c,d,output);
       }
     }
-    if (sprinting) {
-      this.noiseVoice("crack",.046,2860,.15,output,.046,1.23);
-      this.voice("triangle",691,473,.042,.104,output,.069);
-    }
+    if (landing) this.voice("triangle",surface==="water"?104:88,42,.16,.31,output,0,.013);
   }
   roomAt(world,at) {
     const room=world.buildings.locate(at.x,at.y,at.z);
@@ -5611,8 +5702,10 @@ class Audio {
     const delay=local?0:distance/343;
     const out=this.route(pos,blocked?.51:1,filter,14,room,Math.max(2.9,delay+1.65));
     const {tail,crack,body,bass,power,bite}=SHOT_SOUND[id];
-    this.noiseVoice("crack",id==="shotgun"?.072:.043,crack,power*.80,out,delay,bite*(.94+Math.random()*.14));
-    this.noiseVoice("grain",tail,body,power*.90,out,delay+.008,.87+Math.random()*.26);
+    const clip=id==="smg"?"pistol":id==="sniper"?"rifle":id;
+    const hasSample=this.sample(clip,out,power*1.35,bite*(.89+Math.random()*.09),delay);
+    this.noiseVoice("crack",id==="shotgun"?.072:.043,crack,power*(hasSample?.29:.80),out,delay,bite*(.94+Math.random()*.14));
+    this.noiseVoice("grain",tail,body,power*(hasSample?.42:.90),out,delay+.008,.87+Math.random()*.26);
     this.voice("triangle",bass,bass*.39,tail*.94,power*.66,out,delay);
     this.voice("sine",bass*.73,Math.max(24,bass*.27),tail*1.20,power*.42,out,delay+.012);
     if (distance>335 || this.voices.size>96) return;
@@ -5769,6 +5862,7 @@ class Audio {
     if (!c || c.state!=="running") return;
     const now=c.currentTime,camera=game.renderer.camera,p=camera.position;
     this.listener=p;
+    this.world=game.world;
     const d=camera.getWorldDirection(vec()),l=c.listener;
     l.positionX.value=p.x; l.positionY.value=p.y; l.positionZ.value=p.z;
     l.forwardX.value=d.x; l.forwardY.value=d.y; l.forwardZ.value=d.z;
@@ -8373,7 +8467,7 @@ class UI {
   focusCycle(event) {
     if(event.key!=="Tab" || !this.game.modal || this.game.settings.listen) return;
     const panel=$(this.game.modal+"Panel");
-    const list=[...panel.querySelectorAll("button,input,select,canvas[tabindex]")].filter(el=>!el.disabled && el.tabIndex>=0 && el.offsetParent);
+    const list=[...panel.querySelectorAll("button,a[href],input,select,canvas[tabindex]")].filter(el=>!el.disabled && el.tabIndex>=0 && el.offsetParent);
     if(!list.length) return;
     const at=list.indexOf(document.activeElement);
     if(at<0 || (event.shiftKey?at===0:at===list.length-1)) {
@@ -9165,6 +9259,10 @@ class CameraRig {
     this.hipEuler=new THREE.Euler();
     this.aimPosition=vec();
     this.steadySway=vec();
+    this.walkSway=0;
+    this.walkRoll=0;
+    this.walkDip=0;
+    this.speedFov=0;
   }
   resetView() {
     this.firstPerson=false;
@@ -9175,6 +9273,7 @@ class CameraRig {
     this.item=this.nextItem="";
     this.swapTime=.25;
     this.adsBlend=this.adsProgress=this.sprintPose=0;
+    this.walkSway=this.walkRoll=this.walkDip=this.speedFov=0;
     this.last="";
   }
   view(id) {
@@ -9223,7 +9322,7 @@ class CameraRig {
     const dip=this.swapTime<.105?smooth(0,.105,this.swapTime):1-smooth(.105,.25,this.swapTime);
     this.sprintPose=damp(this.sprintPose,actor.speed>4.85 && !actor.aiming?1:0,11,dt);
     const sprint=this.sprintPose, sway=actor.viewSway || this.steadySway;
-    const step=actor.model.phase;
+    const step=actor.id===0?Math.PI*(actor.stepProgress+(actor.stepSide<0?1:0)):actor.model.phase;
     const bob=this.game.settings.values.bob && !this.game.settings.values.reducedMotion ? Math.min(.024,actor.speed*.0042) : 0;
     const a=actor.action;
     const t=actionPhase(a);
@@ -9260,13 +9359,14 @@ class CameraRig {
     }
     this.viewArms.pose(weapon,form,this.item,this.magazine,a,dt);
   }
-  set(pos,direction,fov,kind,dt,snap=false) {
+  set(pos,direction,fov,kind,dt,snap=false,roll=0) {
     const fresh=this.last!==kind;
     this.last=kind;
     this.position.lerp(pos,fresh || snap ? 1 : 1-Math.exp(-dt*17));
     this.camera.position.copy(this.position);
     this.direction.copy(direction).normalize();
     this.camera.lookAt(this.position.clone().add(this.direction));
+    if(roll) this.camera.rotateZ(roll);
     this.camera.fov=fresh?fov:damp(this.camera.fov,fov,12,dt);
     this.camera.updateProjectionMatrix();
     this.camera.updateMatrixWorld(true);
@@ -9295,14 +9395,31 @@ class CameraRig {
     const p=actor.p, item=actor.held(),air=actor.state==="dive"||actor.state==="glide";
     const scope=actor.aiming && item?.id==="sniper" && !air;
     const zoom=actor.aiming && !air;
-    const f=aimVector(actor.yaw,actor.pitch);
     const position=eyePosition(actor);
     const kind=g.state==="spectate"?"spectate":air?"drop":"first";
-    const quake=self && s.shake && !s.reducedMotion?Math.sin(g.clock*48)*actor.shake:0;
-    const viewDir=quake?aimVector(actor.yaw+quake*.013,actor.pitch+quake*.011):f;
+    const motion=self && !s.reducedMotion;
+    const gait=motion && s.bob && actor.grounded && actor.state==="ground";
+    const foot=actor.stepProgress;
+    const sprint=gait && !zoom?smooth(4.5,6.2,actor.speed):0;
+    const weight=gait?smooth(.48,3.7,actor.speed)*(actor.crouching?.52:1)*(zoom?.23:1):0;
+    const shift=Math.sin(foot*Math.PI)*actor.stepSide*weight;
+    this.walkSway=gait?damp(this.walkSway,shift*(.010+sprint*.014),20,dt):0;
+    this.walkDip=motion && s.bob?damp(this.walkDip,(1+Math.cos(foot*TAU))*.5*weight*(.022+sprint*.023),24,dt):0;
+    const strafe=actor.moveX*Math.cos(actor.yaw)-actor.moveZ*Math.sin(actor.yaw);
+    this.walkRoll=motion && s.bob?damp(this.walkRoll,shift*(.006+sprint*.003)-strafe*weight*.0011,17,dt):0;
+    this.speedFov=motion && s.bob?damp(this.speedFov,sprint*2.4,8,dt):0;
+    const landingTime=actor.age-actor.lastLanding;
+    const landing=motion && s.shake && landingTime>=0 && landingTime<.34
+      ? actor.landingStrength*smooth(0,.052,landingTime)*(1-smooth(.054,.34,landingTime))*(zoom?.38:1)
+      : 0;
+    position.x+=Math.cos(actor.yaw)*this.walkSway;
+    position.z-=Math.sin(actor.yaw)*this.walkSway;
+    position.y-=this.walkDip+landing*.086;
+    const quake=motion && s.shake?Math.sin(g.clock*48)*actor.shake:0;
+    const viewDir=aimVector(actor.yaw+quake*.013,actor.pitch+quake*.011);
     this.firstPerson=true;
     this.focus.copy(p);
-    this.set(position,viewDir,scope?19:zoom?s.fov*.76:air?s.fov+.7:s.fov,kind,dt,true);
+    this.set(position,viewDir,scope?19:zoom?s.fov*.76:air?s.fov+.7:s.fov+this.speedFov,kind,dt,true,this.walkRoll+landing*.008);
     this.poseWeapon(actor,dt,true,scope);
   }
   update(dt) {
@@ -9815,12 +9932,28 @@ class Game {
     this.replay.push({t:m.age,p:[p.p.x,p.p.z],actors:this.actors.map(a=>a.state==="bus"?null:[a.p.x,a.p.z])});
     if(this.replay.length>31) this.replay.shift();
   }
-  landed(actor,fromDrop=true) {
-    const p=actor.p;
-    actor.model.land(fromDrop?.92:lerp(.59,1,smooth(3.65,8.5,Math.abs(actor.vy))));
-    this.audio.event("land",p,.74);
-    this.fx.burst(p,actor.surface,fromDrop?20:7,fromDrop?.79:.43);
-    if(!actor.id && fromDrop) this.ui.notice(nearestPlace(p.x,p.z).name,2.2);
+  footstep(actor,strength,sprinting) {
+    const range=actor.crouching?8:sprinting?33:20;
+    const radius=range*(actor.surface==="grass"?.75:actor.surface==="metal"?1.19:1);
+    this.audio.foot(actor.surface,actor.p,strength,sprinting,actor.id===0,actor.stepSide,this.world);
+    this.fx.foot(actor);
+    this.emitNoise(actor,actor.p,"foot",radius);
+    this.onFootstep?.(actor,strength,sprinting,radius);
+  }
+  landed(actor,fromDrop=true,impactSpeed=0) {
+    const strength=fromDrop?.82:lerp(.27,1,smooth(2.7,8.8,impactSpeed));
+    this.presentLanding(actor,actor.surface,strength);
+    this.onLanding?.(actor,strength);
+    if(!actor.id && fromDrop) this.ui.notice(nearestPlace(actor.p.x,actor.p.z).name,2.2);
+  }
+  presentLanding(actor,surface,strength,position=actor.p) {
+    if(actor.age-actor.lastLanding<.25) return;
+    actor.lastLanding=actor.age;
+    actor.landingStrength=strength;
+    actor.stepProgress=.52;
+    actor.model.land(strength);
+    this.audio.landing(surface,position,strength,actor.id===0,this.world);
+    this.fx.burst(position,surface,Math.round(6+12*strength),.32+strength*.48);
   }
   dropSelected() {
     const p=this.player;

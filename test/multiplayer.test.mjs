@@ -4,8 +4,8 @@ import test from "node:test";
 import WebSocket from "ws";
 import { createServer } from "../server.mjs";
 import { Match } from "../match.mjs";
-import { vec, aimVector } from "../dist/game.mjs";
-import { ACTION, MAX_PLAYERS, PROTOCOL } from "../dist/protocol.mjs";
+import { Player, vec, aimVector } from "../dist/game.mjs";
+import { ACTION, MAX_PLAYERS, PROTOCOL, TICK } from "../dist/protocol.mjs";
 
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
@@ -67,6 +67,8 @@ test("private codes, bot toggle, host permission, public fill and synchronized p
   assert.deepEqual(a.items,b.items);
   assert.deepEqual(a.phases,b.phases);
   assert.deepEqual(a.start,b.start);
+  assert.equal(a.momentum,true);
+  assert.equal(b.momentum,true);
   assert.ok(a.items.length>20);
 
   queued.send({t:"public"});
@@ -106,6 +108,8 @@ test("a full 25-slot simulation finishes with one winner and ordered placements"
   assert.ok(events.some(row=>row[0]==="take"));
   assert.ok(events.some(row=>row[0]==="shot"));
   assert.ok(events.some(row=>row[0]==="feed"));
+  assert.ok(events.some(row=>row[0]==="step" && row[6]>0));
+  assert.ok(events.some(row=>row[0]==="land" && row[3]>0));
   match.dispose();
 });
 
@@ -131,5 +135,67 @@ test("nearby players contend for the same item and shots resolve after collision
   assert.ok(b.hp<100);
   assert.ok(events.some(e=>e[0]==="hit"&&e[1]===1&&e[2]===2));
   assert.equal(aimVector(a.yaw).z<0,true);
+  const beforeReload=events.length;
+  a.reserve.Light=12;
+  a.reload();
+  a.tick(a.action.total);
+  assert.deepEqual(events.slice(beforeReload).filter(e=>e[0]==="foley"&&e[1]===a.id).map(e=>e[2]),["magOut","magIn","bolt"]);
   match.dispose();
+});
+
+test("shared player movement eases in, alternates surface footsteps and lands after a jump",()=>{
+  let surface="grass",wall=false;
+  const steps=[],landings=[],effects=[];
+  const player=new Player({
+    headless:true,
+    world:{
+      terrain:{slope:()=>0,height:()=>10},
+      collision:{floor:()=>({y:10,surface}),blocked:x=>wall && x>0}
+    },
+    audio:{event:key=>effects.push(key)},
+    footstep:(actor,strength,sprinting)=>steps.push([actor.surface,actor.stepSide,strength,sprinting]),
+    landed:(actor,fromDrop,impact)=>landings.push([actor.surface,fromDrop,impact])
+  });
+  player.state="ground";
+  player.grounded=true;
+  player.p.set(0,10,0);
+  const move=(ticks,inputs)=>{
+    const command={forward:0,right:0,crouch:false,aim:false,sprint:false,jump:false,...inputs};
+    for(let tick=0;tick<ticks;tick++) {
+      player.tick(TICK);
+      player.moveFromInput(TICK,command);
+      command.jump=false;
+    }
+  };
+
+  move(1,{forward:1});
+  assert.ok(player.speed>.5 && player.speed<2);
+  move(29,{forward:1,right:1});
+  assert.ok(Math.abs(player.speed-4.28)<.01);
+  assert.ok(steps.length>=2);
+  assert.ok(steps.every(row=>row[0]==="grass" && !row[3]));
+  assert.equal(steps[0][1],-steps[1][1]);
+
+  surface="wood";
+  move(30,{forward:1,sprint:true});
+  assert.equal(steps.at(-1)[0],"wood");
+  assert.equal(steps.at(-1)[3],true);
+  move(12,{});
+  assert.ok(player.speed<.025);
+  wall=true;
+  const count=steps.length;
+  move(30,{right:1});
+  assert.equal(player.speed,0);
+  assert.equal(steps.length,count);
+  wall=false;
+
+  move(1,{jump:true});
+  assert.equal(player.grounded,false);
+  assert.ok(player.p.y>10);
+  move(30,{});
+  assert.equal(player.grounded,true);
+  assert.deepEqual(effects,["jump"]);
+  assert.equal(landings.length,1);
+  assert.deepEqual(landings[0].slice(0,2),["wood",false]);
+  assert.ok(landings[0][2]>3);
 });

@@ -303,8 +303,7 @@ export class OnlineMatch {
     this.out=null;
     this.win=null;
     this.predictedGround=false;
-    this.movement=vec();
-    this.strafe=vec();
+    this.momentum=info.momentum===true;
     this.nextMap=0;
     this.nextInteraction=0;
     this.interactionTarget=null;
@@ -364,6 +363,7 @@ export class OnlineMatch {
         if(!this.havePose || actor.state!==state || actor.p.distanceToSquared(this.ownTarget)>19) {
           actor.p.copy(this.ownTarget);
           actor.vy=row[16]??0;
+          actor.driveX=actor.driveZ=0;
           this.predictedGround=false;
           this.havePose=true;
         }
@@ -387,9 +387,9 @@ export class OnlineMatch {
         actor.action=action?{type:action,item:actor.held(),remaining:row[14],total:row[15]}:null;
       }
       if(actor.state!==state) {
-        if(state==="ground") {
-          actor.model.land(.8);
-          if(self) g.audio.event("land",actor.p,.74);
+        if(state==="ground" && !this.momentum) {
+          const ground=g.world.collision.floor(actor.p.x,actor.p.z,actor.p.y+.23,.28,false,true);
+          g.presentLanding(actor,ground.surface,.78);
         }
         if(state==="dead") actor.deathAge=0;
         if(self && state==="glide") g.audio.event("glide",actor.p,.62);
@@ -539,6 +539,28 @@ export class OnlineMatch {
         }
         break;
       }
+      case "step": {
+        const [,id,surface,strength,sprint,side,radius,x,y,z]=event;
+        const point=vec(x,y,z);
+        g.audio.foot(surface,point,strength,!!sprint,false,side,g.world);
+        g.ui.soundCue(this.remote.get(id),point,"foot",radius);
+        break;
+      }
+      case "land": {
+        const [,id,surface,strength,x,y,z]=event;
+        const actor=this.remote.get(id);
+        if(actor) g.presentLanding(actor,surface,strength,vec(x,y,z));
+        break;
+      }
+      case "foley": {
+        const [,id,key,strength,x,y,z]=event;
+        // Jump and swap already play locally for the player who did them.
+        if(id===this.self && (key==="jump" || key==="swap")) break;
+        const point=vec(x,y,z);
+        g.audio.event(key,point,strength);
+        if(key==="magOut") g.ui.soundCue(this.remote.get(id),point,"reload",15);
+        break;
+      }
       case "shot": {
         const [kind,id,weapon,x,y,z]=event,own=id===this.self;
         const point=vec(x,y,z),item=p.held();
@@ -622,7 +644,6 @@ export class OnlineMatch {
     const g=this.game,p=g.player,{damp,angleDiff,clamp,$}=this.engine;
     if(!p || g.state==="result") return;
     const controls=!g.modal && g.input.locked && p.alive;
-    const yaw=p.yaw;
     if(p.alive) this.input(now,controls);
     const current=this.current;
     const time=current?clamp((now-this.arrivedAt)/1000,0,.16):0;
@@ -658,22 +679,26 @@ export class OnlineMatch {
     for(const door of g.world.doors) if(door.object.visible) door.update(dt);
     if(p.alive && p.state!=="bus" && this.havePose) {
       if(controls) {
-        const forward=+(!!(this.held&ACTION.forward))-(!!(this.held&ACTION.back));
-        const side=+(!!(this.held&ACTION.right))-(!!(this.held&ACTION.left));
-        const step=this.movement.set(-Math.sin(yaw)*forward,0,-Math.cos(yaw)*forward)
-          .addScaledVector(this.strafe.set(Math.cos(yaw),0,-Math.sin(yaw)),side);
-        if(step.lengthSq()>1) step.normalize();
-        p.crouching=!!(this.held&ACTION.crouch) || g.world.collision.blocked(p.p.x,p.p.y,p.p.z,1.66,.29);
-        p.aiming=!!(this.held&ACTION.ads) && !p.inBuild && p.state==="ground" && p.held()?.kind==="gun";
-        const speed=p.crouching?2.03:p.action?.type==="med"?2.16:p.aiming?2.60:forward>0 && (this.held&ACTION.sprint)?6.18:4.28;
+        const held=key=>!!(this.held&ACTION[key]);
+        const command={
+          forward:Number(held("forward"))-Number(held("back")),
+          right:Number(held("right"))-Number(held("left")),
+          crouch:held("crouch"),
+          aim:held("ads") && !p.inBuild && p.state==="ground" && p.held()?.kind==="gun",
+          sprint:held("sprint"),
+          jump:g.input.just("jump")
+        };
         const pieces=Math.max(1,Math.ceil(dt/.033));
-        for(let j=0;j<pieces;j++) {
-          if(p.netState==="ground") p.walk(dt/pieces,step.x*speed,step.z*speed,j===0 && g.input.just("jump"));
-          else if(p.netState===p.state) p.airborne(dt/pieces,step.x,step.z,forward>0);
+        for(let j=0;j<pieces && p.netState===p.state;j++) {
+          p.moveFromInput(dt/pieces,command,this.momentum);
+          command.jump=false;
         }
         this.predictedGround=p.state==="ground";
         if(p.state!==p.netState) p.state=p.netState;
-      } else this.predictedGround=false;
+      } else {
+        p.driveX=p.driveZ=0;
+        this.predictedGround=false;
+      }
       // Keep predicted steps responsive and correct only meaningful divergence.
       const target=this.correction.copy(this.ownTarget);
       const lead=controls?time+.045:time;
