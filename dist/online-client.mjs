@@ -700,7 +700,7 @@ export class OnlineMatch {
 
     if(p.interaction!==target) p.holdTime=0;
     p.interaction=target;
-    if(target && target.kind!=="item" && controls && g.input.down("use")) p.holdTime=Math.min(target.duration||.25,p.holdTime+dt);
+    if(target && target.kind!=="item" && target.duration && controls && g.input.down("use")) p.holdTime=Math.min(target.duration||.25,p.holdTime+dt);
     else p.holdTime=0;
     g.builds.ghost.visible=false;
     if(controls && p.inBuild && p.state==="ground") g.builds.preview(p);

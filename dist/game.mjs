@@ -35,7 +35,7 @@ const RARITY_COLORS = ["#c0c8c2","#82d185","#78bdef","#c193f9","#f2bc65"];
 const MATERIALS = ["Wood","Stone","Metal"];
 const BUILD_NAMES = ["Wall","Floor","Ramp","Pyramid"];
 const MATERIAL_HP = [148,235,330];
-const AMMO = { Light:30, Shells:9, Rifle:40, Heavy:8 };
+const AMMO = { Light:60, Shells:18, Rifle:80, Heavy:16 };
 const WEAPON_STATS = {
   pistol: {
     name:"Pistol", mag:12, delay:.245, reload:1.1, damage:24, spread:.015, range:105, falloff:24, ammo:"Light", kick:.025, head:1.65,
@@ -3842,6 +3842,18 @@ class World {
     if(!headless) this.roads.paint(this.terrain);
     await stage(64,"Placing vegetation, vehicles and cover");
     this.vegetation=new Vegetation(this);
+    // Add a chest beside every other ammo box, preserving existing container IDs.
+    const extraChests=this.stashes.filter(stash=>stash.kind==="ammo").filter((_,index)=>index%2===0);
+    for(const stash of extraChests) {
+      const origin=stash.position;
+      for(const [dx,dz] of [[1.45,0],[-1.45,0],[0,1.45],[0,-1.45]]) {
+        const x=origin.x+dx,z=origin.z+dz,y=this.collision.floor(x,z,origin.y+.3,.12).y;
+        if(Math.abs(y-origin.y)>.3 || this.collision.blocked(x,y,z,1,.47)) continue;
+        if(this.stashes.some(other=>other.position.distanceToSquared(vec(x,y,z))<1.35**2)) continue;
+        this.stashes.push({kind:"chest",position:vec(x,y,z),building:stash.building});
+        break;
+      }
+    }
     this.doors.forEach((door,index)=>{door.netId=index;});
     this.batches.commit();
     if(!headless) { this.makeMap();this.terrain.warm(); }
@@ -6697,16 +6709,21 @@ class Loot {
     if (target!==player.interaction) { player.interaction=target; player.holdTime=0; player.interactionDone=false; }
     if (!input.down("use")) { player.holdTime=0; player.interactionDone=false; }
     if (!target || player.interactionDone) return;
+    if(target instanceof Door) {
+      if(input.just("use")) {
+        target.set(!target.open,this.game.audio);
+        this.game.emitNoise(player,target.target,"door",19);
+      }
+      return;
+    }
     if (target.kind==="item") {
       if(input.just("use")) this.take(player,target);
       return;
     }
     if (!input.down("use")) return;
     player.holdTime+=dt;
-    const door=target instanceof Door;
-    if (player.holdTime<(door?.25:target.duration)) return;
-    if(door) { target.set(!target.open,this.game.audio);this.game.emitNoise(player,target.target,"door",19); }
-    else this.take(player,target);
+    if(player.holdTime<target.duration) return;
+    this.take(player,target);
     player.holdTime=0;
     player.interactionDone=true;
   }
@@ -8772,7 +8789,7 @@ class UI {
     const interacting=grounded && !!target;
     show("interact",interacting);
     if(interacting) {
-      $("interactKey").textContent=(target.kind==="item"?"":"Hold ")+key("use");
+      $("interactKey").textContent=(door || target.kind==="item"?"":"Hold ")+key("use");
       $("interactText").textContent=door?(target.open?"Close door":"Open door"):
         target.kind==="item"?"Pick up "+itemName(target.item)+(target.item.kind==="gun"?" · "+RARITIES[target.item.tier]:""):
         target.kind==="chest"?"Open chest":target.kind==="car"?"Search wreck":"Open ammo box";
@@ -8783,7 +8800,7 @@ class UI {
     show("progress",showingAction || hold);
     if(showingAction || hold) {
       $("progressText").textContent=showingAction?(action.type==="reload"?"Reloading":"Using "+itemName(action.item)):"Interacting";
-      const percent=showingAction?1-action.remaining/action.total:p.holdTime/(door?.25:target.duration);
+      const percent=showingAction?1-action.remaining/action.total:p.holdTime/target.duration;
       $("progressFill").style.width=clamp(percent*100,0,100)+"%";
     }
   }
