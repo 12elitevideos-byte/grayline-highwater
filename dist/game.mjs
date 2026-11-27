@@ -900,7 +900,7 @@ class Renderer {
     const width=Math.max(1,window.innerWidth),height=Math.max(1,window.innerHeight);
     const {preset,scale}=this.settings.values;
     const native=Math.min(devicePixelRatio||1,1.35,Math.sqrt(DRAW_PIXELS[preset]/(width*height)));
-    const ratio=Math.max(.13,native*scale/100);
+    const ratio=Math.max(.13,native*scale/100*(this.performanceScale??1));
     this.gl.setPixelRatio(ratio);
     this.gl.setSize(width,height,false);
     if (this.settings.values.post || this.settings.values.aa) {
@@ -9975,10 +9975,27 @@ class Game {
   frame(now) {
     const seconds=this.frameAt?(now-this.frameAt)/1000:.017;
     const cap=Number(this.settings.values.limit),limit=this.state==="menu" ? Math.min(cap || 30,30) : cap;
-    if(this.frameAt && limit && seconds<1/limit-.0024) return;
+    if(limit!==this.previousCap) {
+      this.previousCap=limit;
+      this.nextFrameAt=now;
+    }
+    if(limit && now+1<this.nextFrameAt) return;
+    if(limit) this.nextFrameAt=Math.max(now-1000/limit,this.nextFrameAt)+1000/limit;
     this.frameAt=now;
     this.fps=damp(this.fps,1/Math.max(.001,seconds),4.4,Math.min(seconds,1));
     const dt=Math.min(seconds,.24);
+    // Resize at most once every few seconds and preserve the chosen preset.
+    if(this.isLive() && !this.modal && now>(this.performanceCheck??0)) {
+      this.performanceCheck=now+3500;
+      const target=Math.min(cap||60,60);
+      const scale=this.renderer.performanceScale??1;
+      const next=this.fps<target*.79?Math.max(.64,scale-.12):
+        this.fps>target*.96?Math.min(1,scale+.06):scale;
+      if(Math.abs(next-scale)>.01) {
+        this.renderer.performanceScale=next;
+        this.renderer.resizePending=true;
+      }
+    }
     this.clock+=dt;
     if(this.online?.active && this.match) {
       try { this.online.frame(dt,now); } catch(error) { console.error(error);this.fatal("Grayline ran into an error during the online match. Reload the game to try again.");return; }

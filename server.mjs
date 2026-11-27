@@ -205,8 +205,8 @@ export async function createServer({
       });
       // Send the larger inventory payload only when it changes, with a periodic refresh.
       const self=match.playerState(peer);
-      const signature=JSON.stringify([self.hp,self.shield,self.slot,self.pick,self.build,self.items,self.reserve,self.materials,self.action,self.stats,self.out]);
-      if(signature!==peer.lastSelf || match.tickNumber%15===0) {
+      const signature=JSON.stringify([self.hp,self.shield,self.slot,self.pick,self.build,self.items,self.reserve,self.materials,self.action?.[0],self.stats,self.out]);
+      if(signature!==peer.lastSelf || match.tickNumber%16===0) {
         peer.lastSelf=signature;
         send(peer,self);
       }
@@ -342,7 +342,7 @@ export async function createServer({
           if(match.winner!==null) {
             publish(room);
             room.endAt=wall+endGrace;
-          } else if(match.tickNumber%3===0) publish(room);
+          } else if(match.tickNumber%2===0) publish(room);
         } catch(err) {
           console.error("Match stopped",err);
           for(const peer of room.peers.values()) error(peer,"The match ended because the server hit an error.");

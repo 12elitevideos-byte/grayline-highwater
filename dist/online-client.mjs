@@ -303,7 +303,11 @@ export class OnlineMatch {
     this.out=null;
     this.win=null;
     this.predictedGround=false;
+    this.movement=vec();
+    this.strafe=vec();
     this.nextMap=0;
+    this.nextInteraction=0;
+    this.interactionTarget=null;
     const match=g.match;
     match.start.fromArray(info.start);
     match.end.fromArray(info.end);
@@ -341,12 +345,10 @@ export class OnlineMatch {
     this.latestAge=data.a;
     this.arrivedAt=performance.now();
     const m=g.match, storm=g.storm;
-    m.age=data.a;
     [storm.x,storm.z,storm.r,storm.index,storm.mode,storm.remaining,storm.closed]=data.z;
     m.bus.visible=!!data.b[0];
     m.phase=data.b[1];
-    m.bus.position.fromArray(data.b,2);
-    m.bus.rotation.z=Math.sin(m.age*.99)*.028;
+
     for(const actor of this.remote.values()) if(actor!==g.player) actor.netVisible=false;
     for(const row of data.p) {
       const actor=this.remote.get(row[0]);
@@ -355,9 +357,11 @@ export class OnlineMatch {
       actor.netVisible=true;
       if(self) {
         this.ownTarget.fromArray(row,1);
-        this.ownVelocity.set(row[9],0,row[10]);
+        this.ownVelocity.set(row[9],row[16]??0,row[10]);
         if(!this.havePose || actor.state!==state || actor.p.distanceToSquared(this.ownTarget)>19) {
           actor.p.copy(this.ownTarget);
+          actor.vy=row[16]??0;
+          this.predictedGround=false;
           this.havePose=true;
         }
       } else {
@@ -414,7 +418,6 @@ export class OnlineMatch {
     const g=this.game,p=g.player;
     p.hp=data.hp;
     p.shield=data.shield;
-    if(Math.abs(p.vy-data.vy)>2.4 || !p.grounded && !this.predictedGround) p.vy=data.vy;
     if(p.slot!==data.slot || p.usingPick!==data.pick) p.equipmentChanged();
     p.slot=data.slot;
     p.usingPick=data.pick;
@@ -591,7 +594,7 @@ export class OnlineMatch {
       this.scroll=i.takeWheelStep()||this.scroll;
     } else { this.taps=0;this.scroll=0; }
     this.held=held;
-    if(now>=this.nextInput) {
+    if(now>=this.nextInput || this.taps || this.scroll) {
       this.nextInput=now+30;
       if(this.send({t:"input",n:++this.seq,h:held,j:this.taps,y:p.yaw,p:p.pitch,w:this.scroll})) {
         this.taps=0;
@@ -601,12 +604,13 @@ export class OnlineMatch {
   }
 
   frame(dt,now) {
-    const g=this.game,p=g.player,{vec,damp,angleDiff,aimVector,clamp,$}=this.engine;
+    const g=this.game,p=g.player,{damp,angleDiff,clamp,$}=this.engine;
     if(!p || g.state==="result") return;
     const controls=!g.modal && g.input.locked && p.alive;
     const yaw=p.yaw;
     if(p.alive) this.input(now,controls);
     const current=this.current;
+    const time=current?clamp((now-this.arrivedAt)/1000,0,.16):0;
     const shotsDecay=dt*6.3;
     const visibleCamera=(g.state==="spectate" || !p.alive) && g.killer?.alive?g.killer:p;
     for(const actor of this.remote.values()) {
@@ -616,14 +620,24 @@ export class OnlineMatch {
       actor.gliderOpening=damp(actor.gliderOpening,+(actor.state==="glide"),9,dt);
       if(actor.state==="dead") actor.deathAge+=dt;
       if(actor!==p && actor.netVisible && actor.netPosition) {
-        actor.p.lerp(actor.netPosition,1-Math.exp(-16*dt));
+        const target=this.correction.copy(actor.netPosition);
+        const lead=time+.035;
+        if(actor.alive) {
+          target.x+=actor.moveX*lead;
+          target.z+=actor.moveZ*lead;
+        }
+        actor.p.lerp(target,1-Math.exp(-17*dt));
         actor.yaw+=angleDiff(actor.netYaw,actor.yaw)*(1-Math.exp(-19*dt));
         actor.pitch=damp(actor.pitch,actor.netPitch,19,dt);
       }
     }
     if(current) {
-      const time=clamp((now-this.arrivedAt)/1000,0,.12);
-      g.match.age=this.latestAge+time;
+      const match=g.match;
+      match.age=Math.max(match.age,this.latestAge+time);
+      match.phase=clamp((match.age-START_DELAY)/match.duration,0,1);
+      match.bus.position.copy(match.start).lerp(match.end,match.phase);
+      match.bus.position.y+=Math.sin(match.age*1.68)*.53;
+      match.bus.rotation.z=Math.sin(match.age*.99)*.028;
       g.storm.remaining=Math.max(0,current.z[5]-time);
     }
     for(const door of g.world.doors) if(door.object.visible) door.update(dt);
@@ -631,7 +645,8 @@ export class OnlineMatch {
       if(controls) {
         const forward=+(!!(this.held&ACTION.forward))-(!!(this.held&ACTION.back));
         const side=+(!!(this.held&ACTION.right))-(!!(this.held&ACTION.left));
-        const step=aimVector(yaw).multiplyScalar(forward).addScaledVector(vec(Math.cos(yaw),0,-Math.sin(yaw)),side);
+        const step=this.movement.set(-Math.sin(yaw)*forward,0,-Math.cos(yaw)*forward)
+          .addScaledVector(this.strafe.set(Math.cos(yaw),0,-Math.sin(yaw)),side);
         if(step.lengthSq()>1) step.normalize();
         p.crouching=!!(this.held&ACTION.crouch) || g.world.collision.blocked(p.p.x,p.p.y,p.p.z,1.66,.29);
         p.aiming=!!(this.held&ACTION.ads) && !p.inBuild && p.state==="ground" && p.held()?.kind==="gun";
@@ -644,14 +659,24 @@ export class OnlineMatch {
         this.predictedGround=p.state==="ground";
         if(p.state!==p.netState) p.state=p.netState;
       } else this.predictedGround=false;
-      const moving=controls && (this.held&15);
-      if(p.state!=="ground" || p.grounded || !controls) {
-        const predicted=this.correction.copy(this.ownTarget);
-        if(moving) predicted.addScaledVector(this.ownVelocity,clamp((now-this.arrivedAt)/1000+.06,0,.16));
-        p.p.lerp(predicted,1-Math.exp(-(moving?5.8:21)*dt));
-      } else {
-        p.p.x=damp(p.p.x,this.ownTarget.x,5.8,dt);
-        p.p.z=damp(p.p.z,this.ownTarget.z,5.8,dt);
+      // Keep predicted steps responsive and correct only meaningful divergence.
+      const target=this.correction.copy(this.ownTarget);
+      const lead=controls?time+.045:time;
+      target.addScaledVector(this.ownVelocity,lead);
+      const dx=target.x-p.p.x,dz=target.z-p.p.z;
+      const error=Math.hypot(dx,dz);
+      const tolerance=controls?.23:.035;
+      if(error>tolerance) {
+        const blend=(1-Math.exp(-(controls?9:18)*dt))*(1-tolerance/error);
+        const x=p.p.x+dx*blend,z=p.p.z+dz*blend;
+        if(p.state!=="ground" || !g.world.collision.blocked(x,p.p.y,z,p.crouching?1.14:1.66,.302)) {
+          p.p.x=x;p.p.z=z;
+        }
+      }
+      // A jump is predicted before its acknowledgement. Reconcile height on
+      // landing or in the air without snapping back to a stale grounded pose.
+      if(p.state!=="ground" || p.grounded===p.netGrounded || !controls) {
+        p.p.y=damp(p.p.y,target.y,p.state==="ground"?12:8,dt);
       }
     }
     p.recoverAim(dt);
@@ -666,7 +691,13 @@ export class OnlineMatch {
       if(!actor.netVisible && actor!==p) {actor.model.root.visible=false;continue;}
       actor.model.update(dt,viewer,actor===visibleCamera);
     }
-    const target=p.state==="ground"?g.loot.target(p):null;
+    if(p.state!=="ground") this.interactionTarget=null;
+    else if(now>=(this.nextInteraction||0) || g.input.just("use")) {
+      this.nextInteraction=now+55;
+      this.interactionTarget=g.loot.target(p);
+    }
+    const target=this.interactionTarget;
+
     if(p.interaction!==target) p.holdTime=0;
     p.interaction=target;
     if(target && target.kind!=="item" && controls && g.input.down("use")) p.holdTime=Math.min(target.duration||.25,p.holdTime+dt);

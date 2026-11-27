@@ -163,7 +163,7 @@ export class Match {
         return [p.id,...position(p.p),round(wrapAngle(p.yaw),1000),round(p.pitch,1000),STATUSES.indexOf(p.state),
           flags,EQUIPMENT.indexOf(item?.id??""),round(p.moveX,10),round(p.moveZ,10),
           Math.round(p.shotPose*10),Math.round(p.flinch*10),
-          actionType(p.action?.type),p.action?round(p.action.remaining):0,p.action?round(p.action.total):0];
+          actionType(p.action?.type),p.action?round(p.action.remaining):0,p.action?round(p.action.total):0,round(p.vy,10)];
       })
     };
   }
