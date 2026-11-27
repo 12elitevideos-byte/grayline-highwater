@@ -5138,6 +5138,7 @@ class Player extends Competitor {
   constructor(game,id=0,name="You",outfit=0) {
     super(game,id,name,outfit);
     this.human=true;
+    this.viewSway=vec();
     this.crouchToggle=false;
     this.aimToggle=false;
     this.buildType=0;
@@ -5152,7 +5153,6 @@ class Player extends Competitor {
     this.blockedShot=false;
     this.pendingShot=null;
     this.recoil={ item:null, lastAt:-Infinity, recoverAt:0, pitch:0, yaw:0, rate:12, step:0, heat:0 };
-    this.viewSway=vec();
   }
   wantsAim() {
     const {input,settings}=this.game;
@@ -9073,6 +9073,7 @@ class CameraRig {
     this.hipRotation=new THREE.Quaternion();
     this.hipEuler=new THREE.Euler();
     this.aimPosition=vec();
+    this.steadySway=vec();
   }
   resetView() {
     this.firstPerson=false;
@@ -9130,7 +9131,7 @@ class CameraRig {
     const blend=this.adsBlend, hip=1-blend;
     const dip=this.swapTime<.105?smooth(0,.105,this.swapTime):1-smooth(.105,.25,this.swapTime);
     this.sprintPose=damp(this.sprintPose,actor.speed>4.85 && !actor.aiming?1:0,11,dt);
-    const sprint=this.sprintPose, sway=actor.viewSway;
+    const sprint=this.sprintPose, sway=actor.viewSway || this.steadySway;
     const step=actor.model.phase;
     const bob=this.game.settings.values.bob && !this.game.settings.values.reducedMotion ? Math.min(.024,actor.speed*.0042) : 0;
     const a=actor.action;

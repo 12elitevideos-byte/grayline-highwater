@@ -297,6 +297,8 @@ export class OnlineMatch {
     this.current=null;
     this.latestAge=0;
     this.ownTarget=vec();
+    this.ownVelocity=vec();
+    this.correction=vec();
     this.havePose=false;
     this.out=null;
     this.win=null;
@@ -353,6 +355,7 @@ export class OnlineMatch {
       actor.netVisible=true;
       if(self) {
         this.ownTarget.fromArray(row,1);
+        this.ownVelocity.set(row[9],0,row[10]);
         if(!this.havePose || actor.state!==state || actor.p.distanceToSquared(this.ownTarget)>19) {
           actor.p.copy(this.ownTarget);
           this.havePose=true;
@@ -431,7 +434,7 @@ export class OnlineMatch {
       g.resultRank=rank;
       g.killer=this.remote.get(killer)||null;
       g.match.recordAge=age;
-      if(this.win!==null || this.latestAge>=age+3.45) this.finish(false);
+      if(this.latestAge>=age+3.45 || this.win!==null && this.win!==this.self) this.finish(false);
     }
     if(g.modal==="inventory") g.ui.renderInventory();
   }
@@ -547,7 +550,7 @@ export class OnlineMatch {
           g.audio.event(head?"head":shield?"shieldCrack":"hit");
         }
         if(to===this.self) {
-          p.hitShade=from?.84:.61;
+          p.hitShade=from ? .84 : .61;
           p.bigHit=from&&value>=25?clamp(value/44,.52,1):p.bigHit;
           p.shake=Math.min(.39,p.shake+.18);
           p.attacker=this.remote.get(from);
@@ -641,9 +644,11 @@ export class OnlineMatch {
         this.predictedGround=p.state==="ground";
         if(p.state!==p.netState) p.state=p.netState;
       } else this.predictedGround=false;
-      const moving=controls && this.held&15;
+      const moving=controls && (this.held&15);
       if(p.state!=="ground" || p.grounded || !controls) {
-        p.p.lerp(this.ownTarget,1-Math.exp(-(moving?5.8:21)*dt));
+        const predicted=this.correction.copy(this.ownTarget);
+        if(moving) predicted.addScaledVector(this.ownVelocity,clamp((now-this.arrivedAt)/1000+.06,0,.16));
+        p.p.lerp(predicted,1-Math.exp(-(moving?5.8:21)*dt));
       } else {
         p.p.x=damp(p.p.x,this.ownTarget.x,5.8,dt);
         p.p.z=damp(p.p.z,this.ownTarget.z,5.8,dt);
